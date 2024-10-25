@@ -1,0 +1,1 @@
+rm -r local_test/*
