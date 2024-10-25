@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -539,6 +540,16 @@ func (b *bootstrappedRaft) newRaftNode(ss *snap.Snapshotter, wal *wal.WAL, cl *m
 	raftStatusMu.Lock()
 	raftStatus = n.Status
 	raftStatusMu.Unlock()
+
+	nodes := make([]int, 0)
+	for _, p := range b.peers {
+		nodes = append(nodes, int(p.ID))
+	}
+	sort.Ints(nodes)
+	myPid := sort.Search(len(nodes), func(i int) bool {
+		return nodes[i] >= int(b.config.ID)
+	}) + 1
+	//b.lg.Info("Metronome", zap.Int("myPid", myPid), zap.Ints("nodes", nodes), zap.Int("peers len", len(b.peers)))
 	return newRaftNode(
 		raftNodeConfig{
 			lg:          b.lg,
@@ -547,6 +558,7 @@ func (b *bootstrappedRaft) newRaftNode(ss *snap.Snapshotter, wal *wal.WAL, cl *m
 			heartbeat:   b.heartbeat,
 			raftStorage: b.storage,
 			storage:     serverstorage.NewStorage(b.lg, wal, ss),
+			metronome:   NewMetronome(myPid, len(nodes), len(nodes)/2+1),
 		},
 	)
 }

@@ -117,6 +117,7 @@ type raftNodeConfig struct {
 	// clients should timeout and reissue their messages.
 	// If transport is nil, server will panic.
 	transport rafthttp.Transporter
+	metronome *Metronome
 }
 
 func newRaftNode(cfg raftNodeConfig) *raftNode {
@@ -176,7 +177,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 	go func() {
 		defer r.onStop()
 		islead := false
-
+		r.lg.Info("Metronome", zap.String("info", fmt.Sprintf("pid: %v, order: %v", r.metronome.Pid, r.metronome.MyCriticalOrdering)))
 		for {
 			select {
 			case <-r.ticker.C:
@@ -249,9 +250,18 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					}
 					// gofail: var raftAfterSaveSnap struct{}
 				}
-
 				// gofail: var raftBeforeSave struct{}
-				if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
+
+				myOrder := r.metronome.MyCriticalOrdering
+				var myEntries []raftpb.Entry
+				for _, entry := range rd.Entries {
+					metronomeIdx := int(entry.Index) % r.metronome.TotalLen
+					if myOrder[metronomeIdx] {
+						myEntries = append(myEntries, entry)
+					}
+				}
+				if err := r.storage.Save(rd.HardState, myEntries); err != nil { // here is where entries are persisted
+					//if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
 					r.lg.Fatal("failed to save Raft hard state and entries", zap.Error(err))
 				}
 				if !raft.IsEmptyHardState(rd.HardState) {
