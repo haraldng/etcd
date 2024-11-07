@@ -1,8 +1,11 @@
 {
-  "branches": ["metronome", "main", "no-wal"],
-  "nodes": [7],
-  "max_disk_rate": 150,
+  "branches": ["metronome", "main"],
+  "nodes": [3],
+  "max_disk_rate": 60,
   "value_rate_pairs": [
+    { "value_size": 1024, "rate": 30000 },
+    { "value_size": 1024, "rate": 40000 },
+    { "value_size": 1024, "rate": 50000 },
     { "value_size": 4096, "rate": 1000 },
     { "value_size": 4096, "rate": 2000 },
     { "value_size": 4096, "rate": 4000 },
@@ -13,15 +16,16 @@
     { "value_size": 16384, "rate": 2000 },
     { "value_size": 16384, "rate": 4000 },
     { "value_size": 16384, "rate": 8000 },
-    { "value_size": 16384, "rate": 16000 },
     { "value_size": 32768, "rate": 1000 },
     { "value_size": 32768, "rate": 2000 },
     { "value_size": 32768, "rate": 4000 },
-    { "value_size": 32768, "rate": 8000 },
     { "value_size": 65536, "rate": 1000 },
     { "value_size": 65536, "rate": 2000 },
     { "value_size": 65536, "rate": 4000 },
-    { "value_size": 65536, "rate": 8000 }
+    { "value_size": 1024, "rate": 1000 },
+    { "value_size": 1024, "rate": 2000 },
+    { "value_size": 1024, "rate": 4000 },
+    { "value_size": 1024, "rate": 8000 }
   ],
   "clients": [1024],
   "use_snapshot": ["true"],
@@ -29,8 +33,8 @@
     "warmup": 30,
     "benchmark": 300
   },
-  "output_dir": "nov23",
-  "iterations": 5,
+  "output_dir": "nov24-hdd-3nodes",
+  "iterations": 2,
   "data_dir": "/mnt/etcd_data",
   "sleep_time": 15,
   "quota_backend_bytes": 80530636800

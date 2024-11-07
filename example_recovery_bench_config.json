@@ -1,0 +1,13 @@
+{
+  "branches": ["overhead-recovery"],
+  "nodes": [3],
+  "value_rate_pairs": [
+    { "value_size": 1024, "rate": 10000 }
+  ],
+  "output_dir": "/home/haraldng/overhead_bench",
+  "iterations": 5,
+  "data_dir": "/home/haraldng/etcd/overhead_bench",
+  "sleep_time": 3,
+  "proposals": [5000, 50000, 500000],
+  "nodes_to_stop": 1
+}

@@ -17,7 +17,7 @@ fi
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$config_file"))
 nodes=($(jq -r '.nodes[]' "$config_file"))
-value_sizes=($(jq -r '.value_sizes[]' "$config_file"))
+value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$config_file"))  # Parse value_rate_pairs as an array of tuples
 warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
 benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
 output_dir=$(jq -r '.output_dir' "$config_file")
@@ -25,6 +25,7 @@ clients=($(jq -r '.clients[]' "$config_file"))
 iterations=$(jq -r '.iterations' "$config_file")
 data_dir=$(jq -r '.data_dir' "$config_file")
 quota_backend_bytes=$(jq -r '.quota_backend_bytes' "$config_file")
+output_dir=$(jq -r '.output_dir' "$config_file")
 
 # Use a default directory if not set
 if [ -z "$output_dir" ] || [ "$output_dir" == "null" ]; then
@@ -34,7 +35,6 @@ fi
 output_dir="bench_results/$output_dir"
 mkdir -p "$output_dir"
 echo "Output directory: $output_dir"
-cp "$config_file" "$output_dir/"
 
 goreman_cmd="goreman start"
 generate_proc_file="./generate_procfile.sh"
@@ -78,7 +78,7 @@ for branch in "${branches[@]}"; do
                       $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
                       # Run benchmark
-                      output_file="${branch},true,${node_count},${val_size},${client_count},${benchmark_requests}-${i}.out"
+                      output_file="${branch},${node_count},${val_size},snapshot=${snapshot},clients=${client_count},${benchmark_requests}-${i}.out"
                       echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
                       $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
 
