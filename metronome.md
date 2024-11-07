@@ -1,7 +1,11 @@
 # Metronome
-This branch introduces the Metronome changes such that only the shuffled subset is getting persisted in the WAL of etcd. The original etcd implementation is left on `master` and a branch `no-wal` is an implementation where no entries are persisted.
+This branch introduces the Metronome changes such that only the shuffled subset is getting persisted in the WAL of etcd. The original etcd implementation is left on `main` and a branch `no-wal` is an implementation where no entries are persisted.
 
 ## Local benchmark
+0. Reload environment variables:
+```bash
+$ git checkout metronome
+```
 1. Checkout the `metronome` branch.
 ```bash
 $ git checkout metronome
