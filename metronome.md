@@ -4,7 +4,7 @@ This branch introduces the Metronome changes such that only the shuffled subset 
 ## Local benchmark
 0. Reload environment variables:
 ```bash
-$ git checkout metronome
+$ source ~/.bashrc  
 ```
 1. Checkout the `metronome` branch.
 ```bash
