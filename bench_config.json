@@ -1,0 +1,12 @@
+{
+  "branches": ["metronome", "main", "no-wal"],
+  "nodes": [3, 5],
+  "value_sizes": [128, 512],
+  "request_count": {
+    "warmup": 100,
+    "benchmark": 500
+  },
+  "output_dir": "custom_output_dir",
+  "clients": 1000,
+  "iterations": 2
+}
