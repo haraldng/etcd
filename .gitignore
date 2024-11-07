@@ -38,3 +38,5 @@ hack/tls-setup/certs
 
 /local_test
 Procfile
+/bench_results
+bench_config.json
