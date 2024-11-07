@@ -30,7 +30,7 @@ for i in $(seq 1 $N); do
   cluster_members+="${infra_name}=http://127.0.0.1:${peer_port},"
 
   # Append the node entry to the Procfile
-  echo "${infra_name}: bin/etcd --name ${infra_name} --listen-client-urls http://127.0.0.1:${client_port} --advertise-client-urls http://127.0.0.1:${client_port} --listen-peer-urls http://127.0.0.1:${peer_port} --initial-advertise-peer-urls http://127.0.0.1:${peer_port} --initial-cluster-token etcd-cluster-1 --initial-cluster 'PLACEHOLDER_CLUSTER_MEMBERS' --initial-cluster-state new --enable-pprof --logger=zap --log-outputs=stderr --data-dir ${data_dir}" >> $PROCFILE
+  echo "${infra_name}: bin/etcd --name ${infra_name} --listen-client-urls http://127.0.0.1:${client_port} --advertise-client-urls http://127.0.0.1:${client_port} --listen-peer-urls http://127.0.0.1:${peer_port} --initial-advertise-peer-urls http://127.0.0.1:${peer_port} --initial-cluster-token etcd-cluster-1 --initial-cluster 'PLACEHOLDER_CLUSTER_MEMBERS' --initial-cluster-state new --logger=zap --log-outputs=stderr --data-dir ${data_dir} --snapshot-count 2000000000 --log-level error" >> $PROCFILE
 done
 
 # Remove the trailing comma from cluster members list

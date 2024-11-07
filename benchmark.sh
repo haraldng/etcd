@@ -61,14 +61,14 @@ for branch in "${branches[@]}"; do
                 # Wait for etcd to start (add delay if necessary)
                 sleep 5
 
-                benchmark_cmd="put --clients=$clients --val-size=$val_size"
+                benchmark_cmd="put --clients=$clients --val-size=$val_size --sequential-keys --conns=100 --compact-index-delta=2000000000 --compact-interval=60m"
 
                 # Run warmup
                 echo "Running warmup with $warmup_requests requests..."
                 $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
                 # Run benchmark
-                output_file="${branch},${node_count},${val_size}-${i}.out"
+                output_file="${branch},${node_count},${val_size},${$benchmark_requests}-${i}.out"
                 echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
                 $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
 
