@@ -61,6 +61,8 @@ for branch in "${branches[@]}"; do
                 # Wait for etcd to start (add delay if necessary)
                 sleep 5
 
+                ionice -c2 -n0 -p `pgrep etcd`  # Set I/O priority for etcd process
+
                 benchmark_cmd="put --clients=$clients --val-size=$val_size --sequential-keys --conns=100 --compact-index-delta=2000000000 --compact-interval=60m"
 
                 # Run warmup
