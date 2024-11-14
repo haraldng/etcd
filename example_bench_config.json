@@ -1,0 +1,15 @@
+{
+  "branches": ["main", "metronome", "no_wal"],
+  "nodes": [3, 5],
+  "value_sizes": [1024, 2048],
+  "clients": [256, 512],
+  "use_snapshot": ["true", "false"],
+  "request_count": {
+    "warmup": 100000,
+    "benchmark": 1000000
+  },
+  "output_dir": "cloud_results",
+  "iterations": 5,
+  "data_dir": "/mnt/etcd_data",
+  "sleep_time": 30
+}

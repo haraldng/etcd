@@ -1,11 +1,5 @@
 package etcdserver
 
-import (
-	//"fmt"
-	"math"
-	"sort"
-)
-
 // NodeId is a type alias for node identifiers
 
 // Metronome struct to hold state
@@ -24,34 +18,71 @@ func MaximizeDistanceOrdering(tuples *[]QuorumTuple) []QuorumTuple {
 	orderedTuples := []QuorumTuple{(*tuples)[0]}
 	*tuples = (*tuples)[1:] // Remove first element
 
+	// Map to keep track of the occurrences of each node
+	nodeOccurrences := make(map[int]int)
+
+	// Update node occurrences for the initial tuple
+	for _, node := range orderedTuples[0] {
+		nodeOccurrences[node]++
+	}
+
 	for len(*tuples) > 0 {
-		// Find quorums with no common node with the last one
-		noRepeatTuples := []QuorumTuple{}
-		for _, t := range *tuples {
-			if len(intersect(orderedTuples[len(orderedTuples)-1], t)) == 0 {
-				noRepeatTuples = append(noRepeatTuples, t)
+		// All quorums have common nodes, pick the one with max distance
+		var maxDist = -1
+		var candidates []QuorumTuple
+
+		for _, tuple := range *tuples {
+			currentTuple := orderedTuples[len(orderedTuples)-1]
+			distance := Distance(currentTuple, tuple)
+			if distance > maxDist {
+				maxDist = distance
+				candidates = []QuorumTuple{tuple}
+			} else if distance == maxDist {
+				candidates = append(candidates, tuple)
 			}
 		}
 
-		var nextTuple QuorumTuple
-		if len(noRepeatTuples) > 0 {
-			// Choose one with maximum distance
-			sort.Slice(noRepeatTuples, func(i, j int) bool {
-				return Distance(orderedTuples[len(orderedTuples)-1], noRepeatTuples[i]) > Distance(orderedTuples[len(orderedTuples)-1], noRepeatTuples[j])
-			})
-			nextTuple = noRepeatTuples[0]
+		// If there are multiple candidates with the same max distance, pick the one with the fewest occurrences
+		var selectedTuple QuorumTuple
+		if len(candidates) == 1 {
+			selectedTuple = candidates[0]
 		} else {
-			// All quorums have common nodes, pick the one with max distance
-			sort.Slice(*tuples, func(i, j int) bool {
-				return Distance(orderedTuples[len(orderedTuples)-1], (*tuples)[i]) > Distance(orderedTuples[len(orderedTuples)-1], (*tuples)[j])
-			})
-			nextTuple = (*tuples)[0]
+			minOccurrences := int(^uint(0) >> 1) // Set to max possible int value
+			for _, candidate := range candidates {
+				// Count occurrences of nodes in the candidate tuple
+				occurrences := 0
+				for _, node := range candidate {
+					occurrences += nodeOccurrences[node]
+				}
+				// Pick the candidate with the fewest occurrences
+				if occurrences < minOccurrences {
+					minOccurrences = occurrences
+					selectedTuple = candidate
+				}
+			}
 		}
 
-		orderedTuples = append(orderedTuples, nextTuple)
-		*tuples = removeTuple(*tuples, nextTuple)
+		// Add the selected tuple to the ordered list
+		orderedTuples = append(orderedTuples, selectedTuple)
+
+		// Update node occurrences for the selected tuple
+		for _, node := range selectedTuple {
+			nodeOccurrences[node]++
+		}
+
+		// Remove the selected tuple from the remaining tuples
+		*tuples = removeTuple(*tuples, selectedTuple)
 	}
 	return orderedTuples
+}
+
+func containsNode(q QuorumTuple, node int) bool {
+	for _, n := range q {
+		if n == node {
+			return true
+		}
+	}
+	return false
 }
 
 // Distance calculates the Euclidean Distance between two quorum tuples
@@ -60,13 +91,13 @@ func Distance(t1, t2 QuorumTuple) int {
 		panic("Vectors must have the same dimension for distance calculation")
 	}
 
-	sumOfSquares := 0
-	for i := range t1 {
-		diff := int(t1[i]) - int(t2[i])
-		sumOfSquares += diff * diff
+	var dist = 0
+	for _, node := range t1 {
+		if !containsNode(t2, node) {
+			dist++
+		}
 	}
-
-	return int(math.Sqrt(float64(sumOfSquares)))
+	return dist
 }
 
 // createOrderedQuorums generates quorum combinations and orders them

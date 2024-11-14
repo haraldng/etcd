@@ -10,8 +10,8 @@ import (
 // TestDistance checks the correctness of the distance function
 func TestDistance(t *testing.T) {
 	t1 := etcdserver.QuorumTuple{1, 2, 3}
-	t2 := etcdserver.QuorumTuple{4, 5, 6}
-	expected := 5
+	t2 := etcdserver.QuorumTuple{1, 5, 6}
+	expected := 2
 
 	result := etcdserver.Distance(t1, t2)
 	if result != expected {
@@ -23,15 +23,15 @@ func TestDistance(t *testing.T) {
 func TestMaximizeDistanceOrdering(t *testing.T) {
 	tuples := []etcdserver.QuorumTuple{
 		{1, 2, 3},
+		{3, 4, 5},
+		{1, 2, 4},
 		{4, 5, 6},
-		{7, 8, 9},
-		{10, 11, 12},
 	}
 	expected := []etcdserver.QuorumTuple{
 		{1, 2, 3},
-		{10, 11, 12},
 		{4, 5, 6},
-		{7, 8, 9},
+		{1, 2, 4},
+		{3, 4, 5},
 	}
 
 	orderedTuples := etcdserver.MaximizeDistanceOrdering(&tuples)
@@ -42,7 +42,7 @@ func TestMaximizeDistanceOrdering(t *testing.T) {
 
 // TestNewMetronome checks the creation of a Metronome and ensures properties are correct
 func TestNewMetronome(t *testing.T) {
-	testCases := []int{3, 5}
+	testCases := []int{3, 5, 7}
 
 	for _, numNodes := range testCases {
 		quorumSize := numNodes/2 + 1
