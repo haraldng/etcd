@@ -17,17 +17,16 @@ fi
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$config_file"))
 nodes=($(jq -r '.nodes[]' "$config_file"))
-value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$config_file"))  # Parse value_rate_pairs as an array of tuples
+value_sizes=($(jq -r '.value_sizes[]' "$config_file"))
 clients=($(jq -r '.clients[]' "$config_file"))
 use_snapshot=($(jq -r '.use_snapshot[]' "$config_file"))
-warmup_duration=$(jq -r '.duration.warmup' "$config_file")
-benchmark_duration=$(jq -r '.duration.benchmark' "$config_file")
+warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
+benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
 output_dir=$(jq -r '.output_dir' "$config_file")
 iterations=$(jq -r '.iterations' "$config_file")
 base_data_dir=$(jq -r '.data_dir' "$config_file")
 sleep_time=$(jq -r '.sleep_time' "$config_file")
 quota_backend_bytes=$(jq -r '.quota_backend_bytes' "$config_file")
-max_disk_rate=$(jq -r '.max_disk_rate' "$config_file")  # Parse max_disk_rate in MB/s
 
 # Validate base_data_dir
 if [ -z "$base_data_dir" ] || [ "$base_data_dir" == "null" ]; then
@@ -45,12 +44,9 @@ if [ -z "$output_dir" ] || [ "$output_dir" == "null" ]; then
   output_dir="$(date +'%Y%m%d_%H%M%S')"
 fi
 
-quota_limit=$((quota_backend_bytes * 90 / 100))
-
-output_dir="/mnt/etcd_data/bench_results/$output_dir"
+output_dir="bench_results/$output_dir"
 mkdir -p "$output_dir"
 echo "Output directory: $output_dir"
-cp "$config_file" "$output_dir/"
 
 # SSH configuration file
 IP_FILE="cloud_bench_config.txt"
@@ -85,7 +81,7 @@ done
 endpoints=$(IFS=, ; echo "${IP_ADDRESSES[*]/%/:2379}")
 
 # Total number of benchmark configurations
-total_benchmarks=$(( ${#branches[@]} * ${#nodes[@]} * ${#value_rate_pairs[@]} * ${#clients[@]} * ${#use_snapshot[@]} ))
+total_benchmarks=$(( ${#branches[@]} * ${#nodes[@]} * ${#value_sizes[@]} * ${#clients[@]} * ${#use_snapshot[@]} ))
 
 # Initialize benchmark counter
 benchmark_counter=0
@@ -96,72 +92,6 @@ for ip in "${IP_ADDRESSES[@]}"; do
     ssh "$USERNAME@$ip" "sudo mkdir -p $base_data_dir && sudo chown -R $(whoami) $base_data_dir && chmod -R u+rwx $base_data_dir" || { echo "ERROR: Failed to set up data directory on VM $ip"; exit 1; }
 done
 
-# Function to fetch and save metrics from each etcd node
-fetch_and_save_metrics() {
-    local metrics_dir=$1
-    local iteration=$2
-
-    # Create or truncate the combined metrics CSV file for non-histogram metrics
-    local combined_metrics_file="$metrics_dir/metrics_iteration_${iteration}.csv"
-    > "$combined_metrics_file"  # Truncate the file if it exists
-
-    # Define the non-histogram metrics to extract
-    desired_metrics=(
-        'etcd_disk_wal_fsync_duration_seconds_sum'
-        'etcd_disk_wal_fsync_duration_seconds_count'
-        'etcd_raft_apply_entries_duration_seconds_sum'
-        'etcd_raft_apply_entries_duration_seconds_count'
-        'etcd_disk_backend_commit_duration_seconds_sum'
-        'etcd_disk_backend_commit_duration_seconds_count'
-        'etcd_server_proposals_committed_total'
-        'etcd_server_proposals_applied_total'
-        'etcd_network_peer_sent_bytes_total'
-        'etcd_network_peer_received_bytes_total'
-    )
-
-    # Write CSV headers for the combined metrics file
-    echo "Node_IP,Metric_Name,Metric_Value" >> "$combined_metrics_file"
-
-    for ip in "${IP_ADDRESSES[@]}"; do
-        echo "Fetching metrics from etcd node at $ip..."
-        # Fetch the etcd metrics via SSH
-        metrics=$(ssh "$USERNAME@$ip" "curl -s http://$ip:2379/metrics")
-
-        # Extract and append the desired non-histogram metrics to the combined CSV file
-        for metric in "${desired_metrics[@]}"; do
-            # Extract the metric line(s)
-            echo "$metrics" | grep "^$metric" | while read -r metric_line; do
-                # Extract the metric value
-                metric_value=$(echo "$metric_line" | awk '{print $2}')
-                metric_name=$(echo "$metric_line" | awk '{print $1}')
-                # Append to CSV file
-                echo "$ip,$metric_name,$metric_value" >> "$combined_metrics_file"
-            done
-        done
-
-        # Write histogram metrics to separate files per node
-        node_histogram_file="$metrics_dir/histogram_${ip}_iteration_${iteration}.csv"
-        > "$node_histogram_file"  # Truncate the file if it exists
-        echo "Bucket,Metric_Value" >> "$node_histogram_file"
-
-        # Define the histogram metrics to extract
-        histogram_metrics=(
-            'etcd_disk_wal_fsync_duration_seconds'
-        )
-
-        for hist_metric in "${histogram_metrics[@]}"; do
-            # Extract histogram lines for the metric
-            echo "$metrics" | grep "^${hist_metric}_bucket" | while read -r line; do
-                # Parse the bucket and value
-                bucket_label=$(echo "$line" | awk -F'{' '{print $2}' | awk -F'}' '{print $1}')
-                metric_value=$(echo "$line" | awk '{print $2}')
-                # Append to the node's histogram CSV file
-                echo "$bucket_label,$metric_value" >> "$node_histogram_file"
-            done
-        done
-    done
-}
-
 # Start benchmarking
 for branch in "${branches[@]}"; do
     echo "Checking out branch $branch and rebuilding on each VM..."
@@ -170,42 +100,11 @@ for branch in "${branches[@]}"; do
     done
 
     for node_count in "${nodes[@]}"; do
-        for value_rate in "${value_rate_pairs[@]}"; do
-            # Extract value_size and rate from the tuple
-            val_size=$(echo "$value_rate" | jq -r '.value_size')
-            rate=$(echo "$value_rate" | jq -r '.rate')
-            max_rate=$(( (max_disk_rate * 1024 * 1024) / val_size ))
-            echo "Max rate for value size $val_size: $max_rate"
-
-            if [ "$max_rate" -lt "$rate" ]; then
-                warmup_requests=$((warmup_duration * max_rate * 60/100))
-                benchmark_requests=$((benchmark_duration * max_rate * 60/100))
-            else
-                warmup_requests=$((warmup_duration * rate))
-                benchmark_requests=$((benchmark_duration * rate))
-                if [ "$benchmark_requests" -gt 6000000 ]; then
-                    benchmark_requests=6000000
-                fi
-            fi
-
-            total_data_size=$((val_size * (warmup_requests + benchmark_requests)))
-
-            if [ "$total_data_size" -gt "$quota_limit" ]; then
-                # Adjust the number of requests proportionally to stay within quota
-                adjusted_requests=$((quota_limit / val_size))
-
-                # Divide proportionally between warmup and benchmark to keep ratio
-                warmup_requests=$((adjusted_requests / 2))
-                benchmark_requests=$((adjusted_requests / 2))
-
-                echo "Adjusted warmup and benchmark requests to fit within 90% of quota:"
-                echo "Warmup Requests=$warmup_requests, Benchmark Requests=$benchmark_requests"
-            fi
-
+        for val_size in "${value_sizes[@]}"; do
             for client_count in "${clients[@]}"; do
                 for snap_enabled in "${use_snapshot[@]}"; do
                     benchmark_counter=$((benchmark_counter + 1))
-                    echo "Benchmark $benchmark_counter/$total_benchmarks: Branch=$branch, Nodes=$node_count, Value Size=$val_size, Rate=$rate, Total=$benchmark_requests, Clients=$client_count, Snapshot=$snap_enabled"
+                    echo "Benchmark $benchmark_counter/$total_benchmarks: Branch=$branch, Nodes=$node_count, Value Size=$val_size, Clients=$client_count, Snapshot=$snap_enabled"
 
                     for i in $(seq 1 "$iterations"); do
                         ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
@@ -250,26 +149,17 @@ for branch in "${branches[@]}"; do
                         sleep 10  # Wait for etcd cluster to stabilize
 
                         echo "Running warmup with $warmup_requests requests..."
-                        benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100 --rate=$rate"
-                        timeout -s SIGKILL 15m $benchmark_tool $benchmark_cmd --total=$warmup_requests
+                        benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100"
+                        $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
-                        # Construct the output filename
-                        output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests},${rate}-${i}.out"
-                        # Directory name is the same as filename without iteration number and .out
-                        dir_name="${output_file%-${i}.out}"
-                        mkdir -p "$output_dir/$dir_name"
-
+                        output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests}-${i}.out"
                         echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
-                        timeout -s SIGKILL 15m $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$dir_name/$output_file"
-
-                        # Fetch and save metrics from each etcd node
-                        metrics_dir="$output_dir/$dir_name"
-                        fetch_and_save_metrics "$metrics_dir" "$i"
+                        $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
 
                         # Stop etcd on each instance after the benchmark run
                         echo "Stopping etcd on all VMs after benchmark run $benchmark_counter/$total_benchmarks (iteration $i)..."
                         for ip in "${IP_ADDRESSES[@]}"; do
-                            ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
+                            ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
                         done
 
                         echo "Sleeping for $sleep_time seconds to allow the cluster to stabilize..."
