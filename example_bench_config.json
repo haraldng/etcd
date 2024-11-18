@@ -11,5 +11,6 @@
   "output_dir": "cloud_results",
   "iterations": 5,
   "data_dir": "/mnt/etcd_data",
-  "sleep_time": 30
+  "sleep_time": 30,
+  "quota_backend_bytes": 26843545600
 }
