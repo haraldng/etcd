@@ -34,6 +34,7 @@ fi
 output_dir="bench_results/$output_dir"
 mkdir -p "$output_dir"
 echo "Output directory: $output_dir"
+cp "$config_file" "$output_dir/"
 
 goreman_cmd="goreman start"
 generate_proc_file="./generate_procfile.sh"
@@ -77,7 +78,7 @@ for branch in "${branches[@]}"; do
                       $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
                       # Run benchmark
-                      output_file="${branch},${node_count},${val_size},snapshot=${snapshot},clients=${client_count},${benchmark_requests}-${i}.out"
+                      output_file="${branch},true,${node_count},${val_size},${client_count},${benchmark_requests}-${i}.out"
                       echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
                       $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
 
