@@ -253,7 +253,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				// gofail: var raftBeforeSave struct{}
 
 				myOrder := r.metronome.MyCriticalOrdering
-				var myEntries []raftpb.Entry
+				var myEntries = make([]raftpb.Entry, 0, len(rd.Entries))
 				for _, entry := range rd.Entries {
 					metronomeIdx := int(entry.Index) % r.metronome.TotalLen
 					if myOrder[metronomeIdx] {

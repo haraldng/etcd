@@ -6,8 +6,10 @@ package etcdserver
 type Metronome struct {
 	// Id of this node
 	Pid                int
-	MyCriticalOrdering map[int]bool
+	MyCriticalOrdering []bool
+	CriticalLen        int
 	TotalLen           int
+	Ratio              float64
 }
 
 // QuorumTuple is a type alias for a slice of NodeIds
@@ -107,11 +109,14 @@ func createOrderedQuorums(numNodes, quorumSize int) []QuorumTuple {
 }
 
 // getMyOrdering returns the ordering for the current node and the critical length
-func getMyOrdering(myPid int, orderedQuorums []QuorumTuple) map[int]bool {
-	ordering := make(map[int]bool)
+func getMyOrdering(myPid int, orderedQuorums []QuorumTuple) []bool {
+	totalLen := len(orderedQuorums)
+	ordering := make([]bool, totalLen)
 	for entryId, q := range orderedQuorums {
 		if contains(q, myPid) {
 			ordering[entryId] = true
+		} else {
+			ordering[entryId] = false
 		}
 	}
 	return ordering
@@ -135,22 +140,6 @@ func combinations(start, end, quorumSize int) []QuorumTuple {
 		}
 	}
 	combine(start, 0)
-	return result
-}
-
-// Helper function to find the intersection of two QuorumTuples
-func intersect(a, b QuorumTuple) QuorumTuple {
-	set := make(map[int]bool)
-	for _, v := range a {
-		set[v] = true
-	}
-
-	var result QuorumTuple
-	for _, v := range b {
-		if set[v] {
-			result = append(result, v)
-		}
-	}
 	return result
 }
 
@@ -191,9 +180,19 @@ func Equal(t1, t2 QuorumTuple) bool {
 func NewMetronome(pid int, numNodes, quorumSize int) *Metronome {
 	orderedQuorums := createOrderedQuorums(numNodes, quorumSize)
 	ordering := getMyOrdering(pid, orderedQuorums)
+	var criticalLen = 0
+	for _, willFlush := range ordering {
+		if willFlush {
+			criticalLen++
+		}
+	}
+	totalLen := len(ordering)
+	ratio := float64(criticalLen) / float64(totalLen)
 	return &Metronome{
 		Pid:                pid,
 		MyCriticalOrdering: ordering,
-		TotalLen:           len(orderedQuorums),
+		CriticalLen:        criticalLen,
+		TotalLen:           totalLen,
+		Ratio:              ratio,
 	}
 }

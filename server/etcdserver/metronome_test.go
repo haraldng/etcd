@@ -1,9 +1,10 @@
 package etcdserver_test
 
 import (
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"go.etcd.io/etcd/server/v3/etcdserver"
-	"sort"
+	//"gonum.org/v1/gonum/stat/combin"
 	"testing"
 )
 
@@ -53,7 +54,7 @@ func TestNewMetronome(t *testing.T) {
 			allMetronomes = append(allMetronomes, m)
 
 			if pid == 1 {
-				t.Logf("N=%d: ordering len: %d, total len: %d", numNodes, len(m.MyCriticalOrdering), m.TotalLen)
+				t.Logf("N=%d: critical len: %d, total len: %d, ratio: %f", numNodes, m.CriticalLen, m.TotalLen, m.Ratio)
 			}
 			t.Log(m)
 		}
@@ -62,15 +63,56 @@ func TestNewMetronome(t *testing.T) {
 	}
 }
 
+func TestMetronomeUsage(t *testing.T) {
+	testCases := []int{3, 5, 7}
+	pid := 1
+
+	for _, numNodes := range testCases {
+		quorumSize := numNodes/2 + 1
+		m := etcdserver.NewMetronome(pid, numNodes, quorumSize)
+		numOps := m.TotalLen * 3
+
+		numToFlush := int(m.Ratio * float64(numOps))
+		toFlush := make([]int, 0, numToFlush)
+		fmt.Printf("%v\n", m.MyCriticalOrdering)
+		for i := 0; i < numOps; i++ {
+			metronomeIdx := i % m.TotalLen
+			if m.MyCriticalOrdering[metronomeIdx] {
+				fmt.Printf("Appending: i: %v, metronomeIdx: %v\n", i, metronomeIdx)
+				toFlush = append(toFlush, i)
+			}
+		}
+		assert.Equal(t, numToFlush, len(toFlush), "Number of critical ops should match")
+	}
+}
+
+func countCriticalLen(m *etcdserver.Metronome) int {
+	var criticalLen int
+	for _, willFlush := range m.MyCriticalOrdering {
+		if willFlush {
+			criticalLen++
+		}
+	}
+	return criticalLen
+}
+
 // Helper function to check if the critical lengths are the same and verify quorum assignments
 func checkCriticalLen(t *testing.T, allMetronomes []*etcdserver.Metronome) {
-	criticalLen := len(allMetronomes[0].MyCriticalOrdering)
+	numNodes := len(allMetronomes)
+	quorumSize := numNodes/2 + 1
+
+	first_metro := allMetronomes[0]
+	criticalLen := countCriticalLen(first_metro)
 	totalLen := allMetronomes[0].TotalLen
-	assert.Greater(t, totalLen, 0, "Metronome length should be greater than 0")
+
+	//fmt.Printf("criticalLen: %v\n", criticalLen)
+	assert.Greater(t, totalLen, criticalLen, "Total length should be greater than critical length")
+	assert.Greater(t, criticalLen, 0, "Critical length should be greater than 0")
+	assert.Greater(t, totalLen, 0, "Total length should be greater than 0")
 
 	// Ensure all metronomes have the same critical length
 	for _, m := range allMetronomes {
-		thisCriticalLen := len(m.MyCriticalOrdering)
+		thisCriticalLen := countCriticalLen(m)
 		if thisCriticalLen != criticalLen {
 			t.Errorf("Expected critical length %d, but got %d", criticalLen, thisCriticalLen)
 		}
@@ -79,18 +121,19 @@ func checkCriticalLen(t *testing.T, allMetronomes []*etcdserver.Metronome) {
 		}
 	}
 
-	numNodes := len(allMetronomes)
 	allOrderings := make([][]int, 0, numNodes)
 	for _, m := range allMetronomes {
 		var orderingSlice []int
-		for k := range m.MyCriticalOrdering {
-			orderingSlice = append(orderingSlice, k)
+		for k, willFlush := range m.MyCriticalOrdering {
+			if willFlush {
+				orderingSlice = append(orderingSlice, k)
+			}
 		}
-		sort.Ints(orderingSlice)
 		allOrderings = append(allOrderings, orderingSlice)
 	}
 
-	quorumSize := numNodes/2 + 1
+	fmt.Printf("allOrderings: %v\n", allOrderings)
+
 	numOps := totalLen
 	h := make(map[int]int, numOps)
 	for i := 0; i < numOps; i++ {
