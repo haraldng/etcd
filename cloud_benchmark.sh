@@ -47,6 +47,7 @@ fi
 output_dir="bench_results/$output_dir"
 mkdir -p "$output_dir"
 echo "Output directory: $output_dir"
+cp "$config_file" "$output_dir/"
 
 # SSH configuration file
 IP_FILE="cloud_bench_config.txt"
