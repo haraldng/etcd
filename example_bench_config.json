@@ -1,9 +1,12 @@
 {
-  "branches": ["main", "metronome", "no-wal"],
-  "nodes": [3, 5],
-  "value_sizes": [1024, 2048],
-  "clients": [256, 512],
-  "use_snapshot": ["true", "false"],
+  "branches": ["metronome", "main", "no-wal"],
+  "nodes": [5],
+  "value_rate_pairs": [
+    { "value_size": 512, "rate": 65000 },
+    { "value_size": 256, "rate": 75000 }
+  ],
+  "clients": [1024],
+  "use_snapshot": ["true"],
   "request_count": {
     "warmup": 100000,
     "benchmark": 1000000
@@ -11,6 +14,6 @@
   "output_dir": "cloud_results",
   "iterations": 5,
   "data_dir": "/mnt/etcd_data",
-  "sleep_time": 30,
-  "quota_backend_bytes": 26843545600
+  "sleep_time": 10,
+  "quota_backend_bytes": 42949672960
 }
