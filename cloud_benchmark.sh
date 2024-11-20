@@ -17,7 +17,7 @@ fi
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$config_file"))
 nodes=($(jq -r '.nodes[]' "$config_file"))
-value_sizes=($(jq -r '.value_sizes[]' "$config_file"))
+value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$config_file"))  # Parse value_rate_pairs as an array of tuples
 clients=($(jq -r '.clients[]' "$config_file"))
 use_snapshot=($(jq -r '.use_snapshot[]' "$config_file"))
 warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
@@ -82,7 +82,7 @@ done
 endpoints=$(IFS=, ; echo "${IP_ADDRESSES[*]/%/:2379}")
 
 # Total number of benchmark configurations
-total_benchmarks=$(( ${#branches[@]} * ${#nodes[@]} * ${#value_sizes[@]} * ${#clients[@]} * ${#use_snapshot[@]} ))
+total_benchmarks=$(( ${#branches[@]} * ${#nodes[@]} * ${#value_rate_pairs[@]} * ${#clients[@]} * ${#use_snapshot[@]} ))
 
 # Initialize benchmark counter
 benchmark_counter=0
@@ -101,11 +101,14 @@ for branch in "${branches[@]}"; do
     done
 
     for node_count in "${nodes[@]}"; do
-        for val_size in "${value_sizes[@]}"; do
+        for value_rate in "${value_rate_pairs[@]}"; do
+            # Extract value_size and rate from the tuple
+            val_size=$(echo "$value_rate" | jq -r '.value_size')
+            rate=$(echo "$value_rate" | jq -r '.rate')
             for client_count in "${clients[@]}"; do
                 for snap_enabled in "${use_snapshot[@]}"; do
                     benchmark_counter=$((benchmark_counter + 1))
-                    echo "Benchmark $benchmark_counter/$total_benchmarks: Branch=$branch, Nodes=$node_count, Value Size=$val_size, Clients=$client_count, Snapshot=$snap_enabled"
+                    echo "Benchmark $benchmark_counter/$total_benchmarks: Branch=$branch, Nodes=$node_count, Value Size=$val_size, Rate=$rate, Clients=$client_count, Snapshot=$snap_enabled"
 
                     for i in $(seq 1 "$iterations"); do
                         ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
@@ -150,7 +153,7 @@ for branch in "${branches[@]}"; do
                         sleep 10  # Wait for etcd cluster to stabilize
 
                         echo "Running warmup with $warmup_requests requests..."
-                        benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100"
+                        benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100 --rate=$rate"
                         $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
                         output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests}-${i}.out"
