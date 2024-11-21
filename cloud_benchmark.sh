@@ -156,7 +156,7 @@ for branch in "${branches[@]}"; do
                         benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100 --rate=$rate"
                         $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
-                        output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests}-${i}.out"
+                        output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests},${rate}-${i}.out"
                         echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
                         $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
 
