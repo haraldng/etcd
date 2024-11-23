@@ -248,7 +248,7 @@ for branch in "${branches[@]}"; do
 
                         echo "Running warmup with $warmup_requests requests..."
                         benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100 --rate=$rate"
-                        $benchmark_tool $benchmark_cmd --total=$warmup_requests
+                        timeout -s SIGKILL 10m $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
                         # Construct the output filename
                         output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests},${rate}-${i}.out"
@@ -257,7 +257,7 @@ for branch in "${branches[@]}"; do
                         mkdir -p "$output_dir/$dir_name"
 
                         echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
-                        $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$dir_name/$output_file"
+                        timeout -s SIGKILL 10m $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$dir_name/$output_file"
 
                         # Fetch and save metrics from each etcd node
                         metrics_dir="$output_dir/$dir_name"
