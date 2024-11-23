@@ -1,6 +1,6 @@
 {
   "branches": ["metronome", "main", "no-wal"],
-  "nodes": [5],
+  "nodes": [7],
   "max_disk_rate": 150,
   "value_rate_pairs": [
     { "value_size": 4096, "rate": 1000 },
@@ -30,7 +30,7 @@
     "benchmark": 300
   },
   "output_dir": "nov23",
-  "iterations": 3,
+  "iterations": 5,
   "data_dir": "/mnt/etcd_data",
   "sleep_time": 15,
   "quota_backend_bytes": 80530636800
