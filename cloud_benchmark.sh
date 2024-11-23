@@ -44,7 +44,7 @@ if [ -z "$output_dir" ] || [ "$output_dir" == "null" ]; then
   output_dir="$(date +'%Y%m%d_%H%M%S')"
 fi
 
-output_dir="bench_results/$output_dir"
+output_dir="/mnt/etcd_data/bench_results/$output_dir"
 mkdir -p "$output_dir"
 echo "Output directory: $output_dir"
 cp "$config_file" "$output_dir/"
@@ -92,6 +92,72 @@ for ip in "${IP_ADDRESSES[@]}"; do
     echo "Setting up base data directory on VM $ip"
     ssh "$USERNAME@$ip" "sudo mkdir -p $base_data_dir && sudo chown -R $(whoami) $base_data_dir && chmod -R u+rwx $base_data_dir" || { echo "ERROR: Failed to set up data directory on VM $ip"; exit 1; }
 done
+
+# Function to fetch and save metrics from each etcd node
+fetch_and_save_metrics() {
+    local metrics_dir=$1
+    local iteration=$2
+
+    # Create or truncate the combined metrics CSV file for non-histogram metrics
+    local combined_metrics_file="$metrics_dir/metrics_iteration_${iteration}.csv"
+    > "$combined_metrics_file"  # Truncate the file if it exists
+
+    # Define the non-histogram metrics to extract
+    desired_metrics=(
+        'etcd_disk_wal_fsync_duration_seconds_sum'
+        'etcd_disk_wal_fsync_duration_seconds_count'
+        'etcd_raft_apply_entries_duration_seconds_sum'
+        'etcd_raft_apply_entries_duration_seconds_count'
+        'etcd_disk_backend_commit_duration_seconds_sum'
+        'etcd_disk_backend_commit_duration_seconds_count'
+        'etcd_server_proposals_committed_total'
+        'etcd_server_proposals_applied_total'
+        'etcd_network_peer_sent_bytes_total'
+        'etcd_network_peer_received_bytes_total'
+    )
+
+    # Write CSV headers for the combined metrics file
+    echo "Node_IP,Metric_Name,Metric_Value" >> "$combined_metrics_file"
+
+    for ip in "${IP_ADDRESSES[@]}"; do
+        echo "Fetching metrics from etcd node at $ip..."
+        # Fetch the etcd metrics via SSH
+        metrics=$(ssh "$USERNAME@$ip" "curl -s http://$ip:2379/metrics")
+
+        # Extract and append the desired non-histogram metrics to the combined CSV file
+        for metric in "${desired_metrics[@]}"; do
+            # Extract the metric line(s)
+            echo "$metrics" | grep "^$metric" | while read -r metric_line; do
+                # Extract the metric value
+                metric_value=$(echo "$metric_line" | awk '{print $2}')
+                metric_name=$(echo "$metric_line" | awk '{print $1}')
+                # Append to CSV file
+                echo "$ip,$metric_name,$metric_value" >> "$combined_metrics_file"
+            done
+        done
+
+        # Write histogram metrics to separate files per node
+        node_histogram_file="$metrics_dir/histogram_${ip}_iteration_${iteration}.csv"
+        > "$node_histogram_file"  # Truncate the file if it exists
+        echo "Bucket,Metric_Value" >> "$node_histogram_file"
+
+        # Define the histogram metrics to extract
+        histogram_metrics=(
+            'etcd_disk_wal_fsync_duration_seconds'
+        )
+
+        for hist_metric in "${histogram_metrics[@]}"; do
+            # Extract histogram lines for the metric
+            echo "$metrics" | grep "^${hist_metric}_bucket" | while read -r line; do
+                # Parse the bucket and value
+                bucket_label=$(echo "$line" | awk -F'{' '{print $2}' | awk -F'}' '{print $1}')
+                metric_value=$(echo "$line" | awk '{print $2}')
+                # Append to the node's histogram CSV file
+                echo "$bucket_label,$metric_value" >> "$node_histogram_file"
+            done
+        done
+    done
+}
 
 # Start benchmarking
 for branch in "${branches[@]}"; do
@@ -156,9 +222,18 @@ for branch in "${branches[@]}"; do
                         benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100 --rate=$rate"
                         $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
+                        # Construct the output filename
                         output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests},${rate}-${i}.out"
+                        # Directory name is the same as filename without iteration number and .out
+                        dir_name="${output_file%-${i}.out}"
+                        mkdir -p "$output_dir/$dir_name"
+
                         echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
-                        $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
+                        $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$dir_name/$output_file"
+
+                        # Fetch and save metrics from each etcd node
+                        metrics_dir="$output_dir/$dir_name"
+                        fetch_and_save_metrics "$metrics_dir" "$i"
 
                         # Stop etcd on each instance after the benchmark run
                         echo "Stopping etcd on all VMs after benchmark run $benchmark_counter/$total_benchmarks (iteration $i)..."
