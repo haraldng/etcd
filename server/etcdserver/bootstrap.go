@@ -550,7 +550,7 @@ func (b *bootstrappedRaft) newRaftNode(ss *snap.Snapshotter, wal *wal.WAL, cl *m
 		return nodes[i] >= int(b.config.ID)
 	}) + 1
 	//b.lg.Info("Metronome", zap.Int("myPid", myPid), zap.Ints("nodes", nodes), zap.Int("peers len", len(b.peers)))
-	numNodes := 5
+	numNodes := 7
 	metroQuorumSize := numNodes/2 + 2
 	if len(nodes) != numNodes {
 		s := fmt.Sprintf("Number of nodes is not %v! it's %v", numNodes, len(nodes))
