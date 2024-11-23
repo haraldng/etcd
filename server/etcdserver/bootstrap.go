@@ -550,6 +550,12 @@ func (b *bootstrappedRaft) newRaftNode(ss *snap.Snapshotter, wal *wal.WAL, cl *m
 		return nodes[i] >= int(b.config.ID)
 	}) + 1
 	//b.lg.Info("Metronome", zap.Int("myPid", myPid), zap.Ints("nodes", nodes), zap.Int("peers len", len(b.peers)))
+	numNodes := 5
+	metroQuorumSize := numNodes/2 + 2
+	if len(nodes) != numNodes {
+		s := fmt.Sprintf("Number of nodes is not %v! it's %v", numNodes, len(nodes))
+		panic(s)
+	}
 	return newRaftNode(
 		raftNodeConfig{
 			lg:          b.lg,
@@ -558,7 +564,7 @@ func (b *bootstrappedRaft) newRaftNode(ss *snap.Snapshotter, wal *wal.WAL, cl *m
 			heartbeat:   b.heartbeat,
 			raftStorage: b.storage,
 			storage:     serverstorage.NewStorage(b.lg, wal, ss),
-			metronome:   NewMetronome(myPid, len(nodes), len(nodes)/2+1),
+			metronome:   NewMetronome(myPid, len(nodes), metroQuorumSize),
 		},
 	)
 }
