@@ -20,13 +20,14 @@ nodes=($(jq -r '.nodes[]' "$config_file"))
 value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$config_file"))  # Parse value_rate_pairs as an array of tuples
 clients=($(jq -r '.clients[]' "$config_file"))
 use_snapshot=($(jq -r '.use_snapshot[]' "$config_file"))
-warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
-benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
+warmup_duration=$(jq -r '.duration.warmup' "$config_file")
+benchmark_duration=$(jq -r '.duration.benchmark' "$config_file")
 output_dir=$(jq -r '.output_dir' "$config_file")
 iterations=$(jq -r '.iterations' "$config_file")
 base_data_dir=$(jq -r '.data_dir' "$config_file")
 sleep_time=$(jq -r '.sleep_time' "$config_file")
 quota_backend_bytes=$(jq -r '.quota_backend_bytes' "$config_file")
+max_disk_rate=$(jq -r '.max_disk_rate' "$config_file")  # Parse max_disk_rate in MB/s
 
 # Validate base_data_dir
 if [ -z "$base_data_dir" ] || [ "$base_data_dir" == "null" ]; then
@@ -43,6 +44,8 @@ fi
 if [ -z "$output_dir" ] || [ "$output_dir" == "null" ]; then
   output_dir="$(date +'%Y%m%d_%H%M%S')"
 fi
+
+quota_limit=$((quota_backend_bytes * 90 / 100))
 
 output_dir="/mnt/etcd_data/bench_results/$output_dir"
 mkdir -p "$output_dir"
@@ -171,24 +174,35 @@ for branch in "${branches[@]}"; do
             # Extract value_size and rate from the tuple
             val_size=$(echo "$value_rate" | jq -r '.value_size')
             rate=$(echo "$value_rate" | jq -r '.rate')
-            if [ "$val_size" -gt 30000 ]; then
-                benchmark_requests=500000
+            max_rate=$(( (max_disk_rate * 1024 * 1024) / val_size ))
+            echo "Max rate for value size $val_size: $max_rate"
+
+            if [ "$max_rate" -lt "$rate" ]; then
+                warmup_requests=$((warmup_duration * max_rate * 60/100))
+                benchmark_requests=$((benchmark_duration * max_rate * 60/100))
             else
-                benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
+                warmup_requests=$((warmup_duration * rate))
+                benchmark_requests=$((benchmark_duration * rate))
             fi
 
-            if [ "$branch" == "no-wal" ]; then
-                warmup_requests=$((warmup_requests * 10))
-                benchmark_requests=$((benchmark_requests * 10))
-            else
-                warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
-                benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
+            total_data_size=$((val_size * (warmup_requests + benchmark_requests)))
+
+            if [ "$total_data_size" -gt "$quota_limit" ]; then
+                # Adjust the number of requests proportionally to stay within quota
+                adjusted_requests=$((quota_limit / val_size))
+
+                # Divide proportionally between warmup and benchmark to keep ratio
+                warmup_requests=$((adjusted_requests / 2))
+                benchmark_requests=$((adjusted_requests / 2))
+
+                echo "Adjusted warmup and benchmark requests to fit within 90% of quota:"
+                echo "Warmup Requests=$warmup_requests, Benchmark Requests=$benchmark_requests"
             fi
 
             for client_count in "${clients[@]}"; do
                 for snap_enabled in "${use_snapshot[@]}"; do
                     benchmark_counter=$((benchmark_counter + 1))
-                    echo "Benchmark $benchmark_counter/$total_benchmarks: Branch=$branch, Nodes=$node_count, Value Size=$val_size, Rate=$rate, Clients=$client_count, Snapshot=$snap_enabled"
+                    echo "Benchmark $benchmark_counter/$total_benchmarks: Branch=$branch, Nodes=$node_count, Value Size=$val_size, Rate=$rate, Total=$benchmark_requests, Clients=$client_count, Snapshot=$snap_enabled"
 
                     for i in $(seq 1 "$iterations"); do
                         ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
