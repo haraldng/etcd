@@ -171,6 +171,20 @@ for branch in "${branches[@]}"; do
             # Extract value_size and rate from the tuple
             val_size=$(echo "$value_rate" | jq -r '.value_size')
             rate=$(echo "$value_rate" | jq -r '.rate')
+            if [ "$val_size" -gt 30000 ]; then
+                benchmark_requests=500000
+            else
+                benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
+            fi
+
+            if [ "$branch" == "no-wal" ]; then
+                warmup_requests=$((warmup_requests * 10))
+                benchmark_requests=$((benchmark_requests * 10))
+            else
+                warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
+                benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
+            fi
+
             for client_count in "${clients[@]}"; do
                 for snap_enabled in "${use_snapshot[@]}"; do
                     benchmark_counter=$((benchmark_counter + 1))
