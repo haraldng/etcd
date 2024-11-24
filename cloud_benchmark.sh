@@ -183,6 +183,9 @@ for branch in "${branches[@]}"; do
             else
                 warmup_requests=$((warmup_duration * rate))
                 benchmark_requests=$((benchmark_duration * rate))
+                if [ "$benchmark_requests" -gt 6000000 ]; then
+                    benchmark_requests=6000000
+                fi
             fi
 
             total_data_size=$((val_size * (warmup_requests + benchmark_requests)))
@@ -248,7 +251,7 @@ for branch in "${branches[@]}"; do
 
                         echo "Running warmup with $warmup_requests requests..."
                         benchmark_cmd="put --endpoints=$endpoints --clients=$client_count --val-size=$val_size --sequential-keys --conns=100 --rate=$rate"
-                        timeout -s SIGKILL 10m $benchmark_tool $benchmark_cmd --total=$warmup_requests
+                        timeout -s SIGKILL 15m $benchmark_tool $benchmark_cmd --total=$warmup_requests
 
                         # Construct the output filename
                         output_file="${branch},${snap_enabled},${node_count},${val_size},${client_count},${benchmark_requests},${rate}-${i}.out"
@@ -257,7 +260,7 @@ for branch in "${branches[@]}"; do
                         mkdir -p "$output_dir/$dir_name"
 
                         echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
-                        timeout -s SIGKILL 10m $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$dir_name/$output_file"
+                        timeout -s SIGKILL 15m $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$dir_name/$output_file"
 
                         # Fetch and save metrics from each etcd node
                         metrics_dir="$output_dir/$dir_name"
@@ -266,7 +269,7 @@ for branch in "${branches[@]}"; do
                         # Stop etcd on each instance after the benchmark run
                         echo "Stopping etcd on all VMs after benchmark run $benchmark_counter/$total_benchmarks (iteration $i)..."
                         for ip in "${IP_ADDRESSES[@]}"; do
-                            ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
+                            ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
                         done
 
                         echo "Sleeping for $sleep_time seconds to allow the cluster to stabilize..."
