@@ -13,7 +13,7 @@ N=$1
 BASE_DATA_DIR=$2
 
 # Optional: Quota backend bytes (default to 24696061952 if not provided)
-QUOTA_BACKEND_BYTES=${3:-24696061952}
+QUOTA_BACKEND_BYTES=${3:-5368709120}
 
 PROCFILE="Procfile"
 
