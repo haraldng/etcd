@@ -6,37 +6,112 @@ import (
 	"go.etcd.io/etcd/server/v3/storage/wal/walpb"
 	"go.etcd.io/raft/v3/raftpb"
 	"go.uber.org/zap"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
-// readWAL reads the WAL entries from a given directory
-func ReadWAL(walDir string) (NodeWAL, error) {
+// ReadAllWithMissingIndexes reads all entries from the WAL and identifies missing indexes.
+func ReadAllWithMissingIndexes(walDir string) (NodeWAL, []uint64, error) {
+	nodeWAL := NodeWAL{
+		NodeName: filepath.Base(walDir),
+	}
+
 	lg, err := zap.NewProduction()
 	if err != nil {
-		return NodeWAL{}, fmt.Errorf("failed to create logger: %w", err)
+		return nodeWAL, nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 	defer lg.Sync()
 
 	walsnap := walpb.Snapshot{}
 	w, err := wal.Open(lg, walDir, walsnap)
 	if err != nil {
-		return NodeWAL{}, fmt.Errorf("error opening WAL: %w", err)
+		return nodeWAL, nil, fmt.Errorf("error opening WAL: %w", err)
+	}
+	defer w.Close()
+
+	decoder := w.GetDecoder()
+
+	rec := &walpb.Record{}
+	var (
+		metadata       []byte
+		state          raftpb.HardState
+		entries        []raftpb.Entry
+		missingIndexes []uint64
+	)
+
+	var expectedIndex uint64 = walsnap.Index + 1
+
+	for err = decoder.Decode(rec); err == nil; err = decoder.Decode(rec) {
+		switch rec.Type {
+		case wal.EntryType:
+			e := raftpb.Entry{}
+			e.Unmarshal(rec.Data)
+
+			// Check for missing indexes
+			for expectedIndex < e.Index {
+				missingIndexes = append(missingIndexes, expectedIndex)
+				expectedIndex++
+			}
+
+			entries = append(entries, e)
+			expectedIndex = e.Index + 1
+
+		case wal.StateType:
+			state.Unmarshal(rec.Data)
+
+		case wal.MetadataType:
+			metadata = rec.Data
+
+		case wal.CrcType:
+			// Handle CRC validation if necessary
+
+		default:
+			// Handle other types if necessary
+		}
+	}
+
+	if err != nil && err != io.EOF {
+		return nodeWAL, nil, fmt.Errorf("error reading WAL: %w", err)
+	}
+
+	nodeWAL.Metadata = metadata
+	nodeWAL.State = state
+	nodeWAL.Entries = entries
+
+	return nodeWAL, missingIndexes, nil
+}
+
+// ReadWAL reads the WAL entries from a given directory
+func ReadWAL(walDir string) (NodeWAL, error) {
+	nodeWAL := NodeWAL{
+		NodeName: filepath.Base(walDir),
+	}
+
+	lg, err := zap.NewProduction()
+	if err != nil {
+		return nodeWAL, fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer lg.Sync()
+
+	walsnap := walpb.Snapshot{}
+	w, err := wal.Open(lg, walDir, walsnap)
+	if err != nil {
+		return nodeWAL, fmt.Errorf("error opening WAL: %w", err)
 	}
 	defer w.Close()
 
 	metadata, state, entries, err := w.ReadAll()
-	if err != nil {
-		return NodeWAL{}, fmt.Errorf("error reading WAL entries: %w", err)
+	if err != nil && err != io.EOF {
+		return nodeWAL, fmt.Errorf("error reading WAL entries: %w", err)
 	}
 
-	return NodeWAL{
-		NodeName: filepath.Base(walDir),
-		Metadata: metadata,
-		State:    state,
-		Entries:  entries,
-	}, nil
+	nodeWAL.Metadata = metadata
+	nodeWAL.State = state
+	nodeWAL.Entries = entries
+
+	return nodeWAL, nil
 }
 
 // writeWAL writes a NodeWAL to the specified WAL directory
@@ -113,4 +188,10 @@ func UpdateHardState(nodeWAL *NodeWAL) {
 	lastEntry := nodeWAL.Entries[len(nodeWAL.Entries)-1]
 	nodeWAL.State.Commit = lastEntry.Index
 	nodeWAL.State.Term = lastEntry.Term
+}
+
+// EntrySource represents an entry and its source node.
+type EntrySource struct {
+	Entry raftpb.Entry
+	Node  string
 }

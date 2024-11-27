@@ -94,6 +94,11 @@ type WAL struct {
 	fp    *filePipeline
 }
 
+// GetDecoder exposes the decoder for direct access.
+func (w *WAL) GetDecoder() Decoder {
+	return w.decoder
+}
+
 // Create creates a WAL ready for appending records. The given metadata is
 // recorded at the head of each WAL file, and can be retrieved with ReadAll
 // after the file is Open.

@@ -178,6 +178,16 @@ func Equal(t1, t2 QuorumTuple) bool {
 
 // NewMetronome Metronome factory function to create a new Metronome instance
 func NewMetronome(pid int, numNodes, quorumSize int) *Metronome {
+	if numNodes == 0 || quorumSize == 0 {
+		return &Metronome{
+			Pid:                0,
+			MyCriticalOrdering: []bool{},
+			CriticalLen:        0,
+			TotalLen:           0,
+			Ratio:              0,
+		}
+	}
+
 	orderedQuorums := createOrderedQuorums(numNodes, quorumSize)
 	ordering := getMyOrdering(pid, orderedQuorums)
 	var criticalLen = 0

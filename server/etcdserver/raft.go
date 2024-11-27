@@ -253,16 +253,23 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				// gofail: var raftBeforeSave struct{}
 
 				myOrder := r.metronome.MyCriticalOrdering
-				var myEntries = make([]raftpb.Entry, 0, len(rd.Entries))
-				for _, entry := range rd.Entries {
-					metronomeIdx := int(entry.Index) % r.metronome.TotalLen
-					if myOrder[metronomeIdx] {
-						myEntries = append(myEntries, entry)
+				if len(myOrder) == 0 {
+					if err := r.storage.Save(rd.HardState, rd.Entries); err != nil { // here is where entries are persisted
+						//if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
+						r.lg.Fatal("failed to save Raft hard state and entries", zap.Error(err))
 					}
-				}
-				if err := r.storage.Save(rd.HardState, myEntries); err != nil { // here is where entries are persisted
-					//if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
-					r.lg.Fatal("failed to save Raft hard state and entries", zap.Error(err))
+				} else {
+					var myEntries = make([]raftpb.Entry, 0, len(rd.Entries))
+					for _, entry := range rd.Entries {
+						metronomeIdx := int(entry.Index) % r.metronome.TotalLen
+						if myOrder[metronomeIdx] {
+							myEntries = append(myEntries, entry)
+						}
+					}
+					if err := r.storage.Save(rd.HardState, myEntries); err != nil { // here is where entries are persisted
+						//if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
+						r.lg.Fatal("failed to save Raft hard state and entries", zap.Error(err))
+					}
 				}
 				if !raft.IsEmptyHardState(rd.HardState) {
 					proposalsCommitted.Set(float64(rd.HardState.Commit))
