@@ -6,6 +6,7 @@ import (
 	"go.etcd.io/etcd/server/v3/storage/wal/walpb"
 	"go.etcd.io/raft/v3/raftpb"
 	"go.uber.org/zap"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -57,7 +58,7 @@ func main() {
 		compareWALs(nodeWALs[0], filteredWAL)
 	*/
 
-	missingEntries := findAndFillGaps(filteredWAL, nodeWALs[0])
+	missingEntries := findAndFillGaps(filteredWAL, nodeWALs[1])
 	mergedWAL := mergeEntries(filteredWAL, missingEntries)
 	fmt.Println("\nComparing WALs after merging...")
 	compareWALs(nodeWALs[0], mergedWAL)
@@ -83,7 +84,7 @@ func readWAL(walDir string) ([]raftpb.Entry, error) {
 	defer w.Close()
 
 	// Read all entries
-	_, _, entries, err := w.ReadAll()
+	_, _, entries, err := w.ReadAll() // metadata, hs,
 	if err != nil {
 		return nil, fmt.Errorf("error reading WAL entries: %w", err)
 	}
@@ -198,4 +199,28 @@ func mergeEntries(recovering NodeWAL, missingEntries []raftpb.Entry) NodeWAL {
 		NodeName: recovering.NodeName,
 		Entries:  allEntries,
 	}
+}
+
+// Function to get the latest WAL file
+func getLatestWALFile(walDir string) (string, error) {
+	files, err := ioutil.ReadDir(walDir)
+	if err != nil {
+		return "", err
+	}
+
+	var walFiles []string
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), ".wal") {
+			walFiles = append(walFiles, file.Name())
+		}
+	}
+
+	if len(walFiles) == 0 {
+		return "", fmt.Errorf("no WAL files found in %s", walDir)
+	}
+
+	// Sort WAL files based on sequence number
+	sort.Strings(walFiles)
+	latestWAL := walFiles[len(walFiles)-1]
+	return filepath.Join(walDir, latestWAL), nil
 }
