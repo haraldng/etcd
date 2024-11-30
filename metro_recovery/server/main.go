@@ -1,0 +1,247 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"flag"
+	"fmt"
+	pb "go.etcd.io/etcd/v3/metro_recovery/proto"
+	"go.etcd.io/etcd/v3/metro_recovery/walutil"
+	"go.etcd.io/raft/v3/raftpb"
+	"google.golang.org/grpc"
+	"log"
+	"net"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+// WALServer is our implementation of the WALServiceServer interface
+type WALServer struct {
+	pb.UnimplementedWALServiceServer
+	mu      sync.Mutex // Protect the entries map
+	peers   []string   // List of peer addresses for recovery
+	dataDir string     // Path to the WAL directory
+}
+
+// NewWALServer initializes the server with mock data and peers
+func NewWALServer(peers []string, dataDir string) *WALServer {
+	return &WALServer{
+		peers:   peers,
+		dataDir: dataDir,
+	}
+}
+
+// GetMissingEntries handles gRPC requests for missing entries
+func (s *WALServer) GetMissingEntries(ctx context.Context, req *pb.MissingEntriesRequest) (*pb.MissingEntriesResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	myWAL, err := walutil.ReadWALEntries(s.dataDir)
+	if err != nil {
+		log.Fatalf("Failed to read WAL: %v", err)
+	}
+
+	for _, e := range myWAL.Entries {
+		log.Printf("I have Entry: %v", e.Index)
+	}
+
+	var responseEntries []*pb.Entry
+	var missingIndex = 0
+	for _, e := range myWAL.Entries {
+		if missingIndex > len(myWAL.Entries) || missingIndex >= len(req.Indexes) {
+			break
+		}
+		if e.Index == req.Indexes[missingIndex] {
+			responseEntries = append(responseEntries, &pb.Entry{
+				Index: e.Index,
+				Term:  e.Term,
+				Data:  e.Data,
+			})
+			missingIndex++
+		}
+	}
+	if missingIndex < len(req.Indexes) {
+		log.Printf("Missing entries: %v", req.Indexes[missingIndex:])
+	}
+	for _, e := range responseEntries {
+		log.Printf("Returning entry: %v", e.Index)
+	}
+	return &pb.MissingEntriesResponse{Entries: responseEntries}, nil
+}
+
+// recoverWAL performs recovery by detecting missing entries, requesting them from peers, and merging them
+func (s *WALServer) recoverWAL() {
+	log.Println("Starting recovery process...")
+
+	// Read the WAL and find missing indexes
+	myWAL, missingIndexes, err := walutil.ReadWALWithDetails(s.dataDir, true)
+	if err != nil {
+		log.Fatalf("Failed to read WAL: %v", err)
+	}
+
+	if len(missingIndexes) == 0 {
+		fmt.Println("No missing entries detected.")
+		return
+	}
+
+	firstEntry := myWAL.Entries[0]
+	log.Printf("HS: %v, First entry: %v", myWAL.State, firstEntry)
+
+	fmt.Printf("Missing indexes: %v\n", missingIndexes)
+
+	// Request missing entries from peers
+	var collectedEntries []*pb.Entry
+	collectedEntries = s.requestMissingEntries(missingIndexes)
+
+	// If no entries were collected, exit
+	if len(collectedEntries) == 0 {
+		fmt.Println("No missing entries could be retrieved from peers.")
+		return
+	}
+
+	fmt.Printf("Collected %d missing entries.\n", len(collectedEntries))
+
+	// Merge collected entries into the WAL
+	var missingRaftEntries []raftpb.Entry
+	for _, e := range collectedEntries {
+		missingRaftEntries = append(missingRaftEntries, raftpb.Entry{
+			Index: e.Index,
+			Term:  e.Term,
+			Data:  e.Data,
+		})
+	}
+
+	mergedWAL := walutil.MergeEntries(myWAL, missingRaftEntries)
+	fmt.Println("Missing entries successfully merged into the WAL.")
+
+	for _, entry := range mergedWAL.Entries {
+		log.Printf("Merged entry: %v", entry.Index)
+	}
+
+	// Write the merged WAL back to the directory
+	err = walutil.WriteWAL(s.dataDir, mergedWAL)
+	if err != nil {
+		log.Fatalf("Failed to write merged WAL: %v", err)
+	}
+
+	// Request missing entries from peers
+	log.Println("Recovery process completed.")
+}
+
+// requestMissingEntries sends requests for missing entries to all peers
+func (s *WALServer) requestMissingEntries(missingIndexes []uint64) []*pb.Entry {
+	var collectedEntries []*pb.Entry
+	var wg sync.WaitGroup
+	mu := &sync.Mutex{} // Protect the collectedEntries slice
+
+	for _, peer := range s.peers {
+		wg.Add(1)
+		go func(peer string) {
+			defer wg.Done()
+			conn, err := grpc.Dial(peer, grpc.WithInsecure())
+			if err != nil {
+				log.Printf("Failed to connect to peer %s: %v", peer, err)
+				return
+			}
+			defer conn.Close()
+
+			client := pb.NewWALServiceClient(conn)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			req := &pb.MissingEntriesRequest{Indexes: missingIndexes}
+			res, err := client.GetMissingEntries(ctx, req)
+			if err != nil {
+				log.Printf("Failed to fetch entries from peer %s: %v", peer, err)
+				return
+			}
+
+			mu.Lock()
+			collectedEntries = append(collectedEntries, res.Entries...)
+			mu.Unlock()
+		}(peer)
+	}
+	wg.Wait()
+
+	return collectedEntries
+}
+
+// startGRPCServer starts the gRPC server
+func startGRPCServer(port string, peers []string, dataDir string) {
+	server := NewWALServer(peers, dataDir)
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Fatalf("Failed to listen on port %s: %v", port, err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterWALServiceServer(grpcServer, server)
+
+	log.Printf("gRPC server running on port %s...", port)
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Failed to serve: %v", err)
+	}
+}
+
+// readPeersFromFile reads peer addresses from a file, excluding the current server's address.
+func readPeersFromFile(filePath, selfAddress string) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open peers file: %w", err)
+	}
+	defer file.Close()
+
+	var peers []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		peer := strings.TrimSpace(scanner.Text())
+		if peer != "" && peer != selfAddress { // Exclude self
+			peers = append(peers, peer)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading peers file: %w", err)
+	}
+	log.Printf("Peers: %v", peers)
+	return peers, nil
+}
+
+func main() {
+	mode := flag.String("mode", "server", "Mode: 'server' to start the server, 'recover' to trigger recovery")
+	port := flag.String("port", "50051", "Port for the gRPC server")
+	dataDir := flag.String("data-dir", "./data", "Path to the etcd data directory (where WALs are stored)")
+	peersFile := flag.String("peers-file", "", "Path to the file containing peer addresses (one per line)")
+	ip := flag.String("ip", "", "IP address or hostname of the current server (required for peer filtering)")
+	flag.Parse()
+
+	// Validate required fields
+	if *ip == "" {
+		log.Fatalf("You must specify the server IP or hostname using --ip.")
+	}
+	if _, err := os.Stat(*dataDir); os.IsNotExist(err) {
+		log.Fatalf("Data directory %s does not exist.", *dataDir)
+	}
+	if *peersFile == "" {
+		log.Fatalf("You must specify a peers file using --peers-file.")
+	}
+
+	selfAddress := fmt.Sprintf("%s:%s", *ip, *port)
+
+	peers, err := readPeersFromFile(*peersFile, selfAddress)
+	if err != nil {
+		log.Fatalf("Failed to read peers: %v", err)
+	}
+
+	server := NewWALServer(peers, *dataDir)
+
+	if *mode == "server" {
+		startGRPCServer(*port, peers, *dataDir)
+	} else if *mode == "recover" {
+		go server.recoverWAL()
+		fmt.Println("Recovery process triggered.")
+		select {} // Keep the program running
+	} else {
+		fmt.Println("Invalid mode. Use 'server' to start the server or 'recover' to trigger recovery.")
+	}
+}

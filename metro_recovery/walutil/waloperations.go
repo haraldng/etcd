@@ -12,8 +12,21 @@ import (
 	"sort"
 )
 
-// ReadAllWithMissingIndexes reads all entries from the WAL and identifies missing indexes.
-func ReadAllWithMissingIndexes(walDir string) (NodeWAL, []uint64, error) {
+// ReadWALEntries reads the WAL entries from the specified directory.
+func ReadWALEntries(walDir string) (NodeWAL, error) {
+	nodeWAL, _, err := ReadWALWithDetails(walDir, false)
+	return nodeWAL, err
+}
+
+// GetMissingIndexes returns only the missing indexes in the WAL.
+func GetMissingIndexes(walDir string) ([]uint64, error) {
+	_, missingIndexes, err := ReadWALWithDetails(walDir, true)
+	return missingIndexes, err
+}
+
+// readWALWithDetails is a shared helper function that reads WAL entries
+// and optionally computes missing indexes.
+func ReadWALWithDetails(walDir string, findMissing bool) (NodeWAL, []uint64, error) {
 	nodeWAL := NodeWAL{
 		NodeName: filepath.Base(walDir),
 	}
@@ -32,7 +45,6 @@ func ReadAllWithMissingIndexes(walDir string) (NodeWAL, []uint64, error) {
 	defer w.Close()
 
 	decoder := w.GetDecoder()
-
 	rec := &walpb.Record{}
 	var (
 		metadata       []byte
@@ -49,10 +61,12 @@ func ReadAllWithMissingIndexes(walDir string) (NodeWAL, []uint64, error) {
 			e := raftpb.Entry{}
 			e.Unmarshal(rec.Data)
 
-			// Check for missing indexes
-			for expectedIndex < e.Index {
-				missingIndexes = append(missingIndexes, expectedIndex)
-				expectedIndex++
+			// Check for missing indexes if findMissing is enabled
+			if findMissing {
+				for expectedIndex < e.Index {
+					missingIndexes = append(missingIndexes, expectedIndex)
+					expectedIndex++
+				}
 			}
 
 			entries = append(entries, e)
@@ -76,11 +90,23 @@ func ReadAllWithMissingIndexes(walDir string) (NodeWAL, []uint64, error) {
 		return nodeWAL, nil, fmt.Errorf("error reading WAL: %w", err)
 	}
 
+	committedIndex := state.Commit
+	lastIndex := entries[len(entries)-1].Index
+
+	if lastIndex < committedIndex {
+		for i := lastIndex + 1; i <= committedIndex; i++ {
+			missingIndexes = append(missingIndexes, i)
+		}
+	}
+
 	nodeWAL.Metadata = metadata
 	nodeWAL.State = state
 	nodeWAL.Entries = entries
 
-	return nodeWAL, missingIndexes, nil
+	if findMissing {
+		return nodeWAL, missingIndexes, nil
+	}
+	return nodeWAL, nil, nil
 }
 
 // ReadWAL reads the WAL entries from a given directory

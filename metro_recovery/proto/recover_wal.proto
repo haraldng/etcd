@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package proto;
+
+service WALService {
+  rpc GetMissingEntries (MissingEntriesRequest) returns (MissingEntriesResponse);
+}
+
+message MissingEntriesRequest {
+  repeated uint64 indexes = 1; // List of missing indexes
+}
+
+message MissingEntriesResponse {
+  repeated Entry entries = 1; // List of entries
+}
+
+message Entry {
+  uint64 index = 1; // Index of the entry
+  uint64 term = 2;  // Term of the entry
+  bytes data = 3;   // Data of the entry
+}
