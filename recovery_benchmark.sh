@@ -1,313 +1,225 @@
 #!/bin/bash
 
-# Configuration parameters
-X_PUTS=1000   # Number of initial PUT requests
-Y_KILLS=1     # Number of nodes to kill
-Z_WAIT=3     # Wait time in seconds before recovery
-ETCD_BINARY="./bin/etcd"
-SERVER_BINARY="./metro_recovery/server/server"
-BENCH_CMD="go run ./tools/benchmark"
-DATA_DIR="/Users/haraldng/code/etcd/local_test"
-LOG_DIR="local_test"
-COPY_DIR="/Users/haraldng/code/etcd/copied_data"
-METRICS_LOG="local_test/metrics.csv"
-RECOVERY_MODE="recover" # Recovery mode argument
-PEERS_FILE="/Users/haraldng/code/etcd/local_test/local_peers.txt"
+# Check if the configuration file is passed as an argument
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <config_file>"
+  exit 1
+fi
 
-# Cluster token for etcd
+CONFIG_FILE=$1
+
+# Validate if the configuration file exists
+if ! [ -f "$CONFIG_FILE" ]; then
+  echo "Configuration file $CONFIG_FILE not found!"
+  exit 1
+fi
+
+RECOVERY_SCRIPT="./recovery.sh"
+SERVER_BIN="./metro_recovery/server/server"
+IP_FILE="cloud_bench_config.txt"
+
+# Parse configurations using jq
+branches=($(jq -r '.branches[]' "$CONFIG_FILE"))
+nodes=($(jq -r '.nodes[]' "$CONFIG_FILE"))
+value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$CONFIG_FILE"))
+proposals=($(jq -r '.proposals[]' "$CONFIG_FILE"))
+output_dir=$(jq -r '.output_dir' "$CONFIG_FILE")
+iterations=$(jq -r '.iterations' "$CONFIG_FILE")
+base_data_dir=$(jq -r '.data_dir' "$CONFIG_FILE")
+sleep_time=$(jq -r '.sleep_time' "$CONFIG_FILE")
+etcd_binary=$(jq -r '.etcd_binary' "$CONFIG_FILE")
+benchmark_tool=$(jq -r '.benchmark_cmd' "$CONFIG_FILE")
+num_to_stop=$(jq -r '.nodes_to_stop' "$CONFIG_FILE")
+wal_server_port=50051
+
+output_dir=${output_dir:-"$(date +'%Y%m%d_%H%M%S')"}
+mkdir -p "$output_dir"
+cp "$CONFIG_FILE" "$output_dir/"
+
+
+if ! [ -f "$IP_FILE" ]; then
+  echo "SSH configuration file $IP_FILE not found!"
+  exit 1
+fi
+
+USERNAME=$(head -n 1 "$IP_FILE")
+readarray -t IP_ADDRESSES < <(tail -n +2 "$IP_FILE")
+
+TOTAL_NODES=${#IP_ADDRESSES[@]}
 CLUSTER_TOKEN="etcd-cluster-1"
 
-# Clean up old directories and metrics log
-rm -rf $DATA_DIR $LOG_DIR $COPY_DIR $METRICS_LOG
-mkdir -p $DATA_DIR $LOG_DIR $COPY_DIR
+# Generate peers.txt file in the base directory
+PEERS_FILE="peers.txt"
+> "$PEERS_FILE" # Truncate the file if it exists
 
-# Local IP addresses for testing
-LOCAL_IP="127.0.0.1"
-PORT_START=2380
-CLIENT_PORT_START=2379
+for ip in "${IP_ADDRESSES[@]}"; do
+  echo ":$wal_server_port" >> "$PEERS_FILE"
+done
 
-# Number of nodes
-TOTAL_NODES=3
+# Synchronize peers.txt to all nodes
+for ip in "${IP_ADDRESSES[@]}"; do
+  scp "$PEERS_FILE" "$USERNAME@$ip:~/etcd/"
+done
 
-# Build the initial cluster string
+# Cluster initialization string
 INITIAL_CLUSTER=""
-for i in $(seq 1 $TOTAL_NODES); do
-  NODE_NAME="infra$i"
-  peer_port=$((2380 + (i - 1) * 10000))
-  INITIAL_CLUSTER+="$NODE_NAME=http://$LOCAL_IP:$peer_port"
-  if [ "$i" -lt $TOTAL_NODES ]; then
+for i in "${!IP_ADDRESSES[@]}"; do
+  NODE_NAME="infra$((i + 1))"
+  NODE_IP="${IP_ADDRESSES[i]}"
+  INITIAL_CLUSTER+="$NODE_NAME=http://$NODE_IP:2380"
+  if [ "$i" -lt $((${#IP_ADDRESSES[@]} - 1)) ]; then
     INITIAL_CLUSTER+=","
   fi
 done
 
-# Function to start etcd nodes
+endpoints=$(IFS=, ; echo "${IP_ADDRESSES[*]/%/:2379}")
+
+# SSH functions
+prepare_data_dirs() {
+  for ip in "${IP_ADDRESSES[@]}"; do
+    ssh "$USERNAME@$ip" "mkdir -p $base_data_dir && chmod -R u+rwx $base_data_dir" || { echo "ERROR: Failed to prepare directories on VM $ip"; exit 1; }
+  done
+}
+
+stop_nodes() {
+  for i in $(seq 1 "$num_to_stop"); do
+    NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+    ssh "$USERNAME@$NODE_IP" "pkill etcd || true"
+  done
+}
+
 start_etcd_cluster() {
-  echo "Starting etcd cluster with $TOTAL_NODES nodes..."
-  for i in $(seq 1 $TOTAL_NODES); do
-    NODE_NAME="infra$i"
-    DATA_PATH="$DATA_DIR/$NODE_NAME"
-    mkdir -p "$DATA_PATH"
-    # Calculate ports for client and peer connections based on index
-    client_port=$((2379 + (i - 1) * 10000))
-    peer_port=$((2380 + (i - 1) * 10000))
-    cluster_members+="${infra_name}=http://$LOCAL_IP:${peer_port},"
-
-    nohup $ETCD_BINARY --name $NODE_NAME \
-      --listen-client-urls http://$LOCAL_IP:$client_port \
-      --advertise-client-urls http://$LOCAL_IP:$client_port \
-      --listen-peer-urls http://$LOCAL_IP:$peer_port \
-      --initial-advertise-peer-urls http://$LOCAL_IP:$peer_port \
+  for i in "${!IP_ADDRESSES[@]}"; do
+    NODE_NAME="infra$((i + 1))"
+    NODE_IP="${IP_ADDRESSES[i]}"
+    ssh "$USERNAME@$NODE_IP" "nohup $etcd_binary --name $NODE_NAME \
+      --listen-client-urls http://$NODE_IP:2379 \
+      --advertise-client-urls http://$NODE_IP:2379 \
+      --listen-peer-urls http://$NODE_IP:2380 \
+      --initial-advertise-peer-urls http://$NODE_IP:2380 \
       --initial-cluster-token $CLUSTER_TOKEN \
-      --initial-cluster "$INITIAL_CLUSTER" \
-      --initial-cluster-state new \
-      --data-dir="$DATA_PATH" \
-      --logger=zap \
-      --metrics=extensive \
-      > "$LOG_DIR/$NODE_NAME.log" 2>&1 &
-    echo $! > "$LOG_DIR/$NODE_NAME.pid"
+      --initial-cluster '$INITIAL_CLUSTER' \
+      --data-dir=$base_data_dir/$NODE_NAME > $output_dir/$NODE_NAME.log 2>&1 &"
   done
-
-  sleep 5
-  echo "Etcd cluster started."
+  sleep 10
 }
 
-# Function to stop specific number of etcd nodes
-stop_etcd_nodes() {
-  echo "Stopping $Y_KILLS nodes..."
-  for i in $(seq 1 $Y_KILLS); do
-    PID_FILE="$LOG_DIR/infra$i.pid"
-    if [ -f "$PID_FILE" ]; then
-      kill "$(cat $PID_FILE)"
-      rm "$PID_FILE"
-      echo "Stopped infra$i."
-    fi
+start_healthy_servers() {
+  for i in $(seq $((num_to_stop + 1)) "$num_nodes"); do
+    NODE_NAME="infra$i"
+    NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+    server_log="$output_dir/server_${NODE_NAME}.log"
+    data_dir="$base_data_dir/$NODE_NAME"
+    copy_dir="$base_data_dir/copied_$NODE_NAME"
+
+    echo "Preparing healthy server $NODE_NAME on $NODE_IP..."
+
+    # Ensure the data directory is copied to a separate location
+    ssh "$USERNAME@$NODE_IP" "
+      mkdir -p $copy_dir && \
+      cp -r $data_dir/* $copy_dir/ && \
+      echo 'Copied data directory for $NODE_NAME to $copy_dir.'
+    "
+
+    # Start the server in "server" mode using the copied data directory
+    echo "Starting server program for healthy server $NODE_NAME..."
+    ssh "$USERNAME@$NODE_IP" "
+      nohup $SERVER_BIN --mode=server --port=$wal_server_port \
+        --data-dir=$copy_dir --peers-file=$base_data_dir/peers.txt \
+        > $server_log 2>&1 &
+    "
+    echo "Healthy server $NODE_NAME started with logs at $server_log."
   done
 }
 
-# Function to perform PUT requests using etcdctl benchmark
-perform_put_benchmark() {
-  local total_puts=$1
-  local log_file=$2
 
-  echo "Performing $total_puts PUT requests using etcdctl benchmark..."
-  nohup $BENCH_CMD put --endpoints=http://$LOCAL_IP:2379 --clients=1000 --conns=100 --key-size=16 --sequential-keys --total=$total_puts > "$LOG_DIR/$log_file" 2>&1
-  echo "PUT benchmark completed."
+start_faulty_servers() {
+  for i in $(seq 1 "$num_to_stop"); do
+    NODE_NAME="infra$i"
+    NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+    recovery_log="$output_dir/recover_${NODE_NAME}.log"
+
+    echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP..."
+
+    # Execute the recovery script in the background
+    ssh "$USERNAME@$NODE_IP" "nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --port $wal_server_port \
+      --data-dir $base_data_dir/$NODE_NAME --peers-file $base_data_dir/peers.txt \
+      --etcd-binary $etcd_binary --server-binary $SERVER_BIN \
+      --cluster-token $CLUSTER_TOKEN --initial-cluster '$INITIAL_CLUSTER' \
+      --output-dir $output_dir > $recovery_log 2>&1 &"
+
+    echo "Recovery script started for $NODE_NAME."
+  done
 }
 
-# Function to copy the relevant directory structure and WAL
-copy_data_directory() {
-  local node_name=$1
-  local source_dir="$DATA_DIR/$node_name"
-  local target_dir="$COPY_DIR/$node_name"
-
-  echo "Copying entire data directory for $node_name..."
-  mkdir -p "$target_dir"
-
-  # Copy the entire source directory to the target directory
-  cp -r "$source_dir/" "$target_dir/"
-
-  echo "Copied data directory for $node_name to $target_dir."
-}
-
-
-# Function to replace the original data directory with the merged WAL data
-replace_data_dir_with_recovered_wal() {
-  local node_name=$1
-  local original_data_path="$DATA_DIR/infra$node_name"
-  local recovered_data_path="$COPY_DIR/infra$node_name"
-
-  echo "Replacing original data directory for $node_name with the recovered data..."
-
-  # Backup the original data directory (optional)
-#  if [ -d "$original_data_path" ]; then
-#    mv "$original_data_path" "${original_data_path}_backup_$(date +%s)"
-#    echo "Original data directory for $node_name backed up."
-#  fi
-
-  # Replace the original data directory with the recovered one
-  cp -r "$recovered_data_path" "$original_data_path"
-  echo "Replaced original data directory for $node_name."
-}
-
-# Function to restart an etcd node with the recovered data directory
-restart_etcd_with_recovered_wal() {
-  local i=$1
-
-  echo "Preparing to restart etcd node $node_name with recovered WAL..."
-
-  NODE_NAME="infra$i"
-  DATA_PATH="$DATA_DIR/$NODE_NAME"
-
-  # Calculate ports for client and peer connections based on index
-  client_port=$((2379 + (i - 1) * 10000))
-  peer_port=$((2380 + (i - 1) * 10000))
-  cluster_members+="${infra_name}=http://$LOCAL_IP:${peer_port},"
-
-  nohup $ETCD_BINARY --name $NODE_NAME \
-    --listen-client-urls http://$LOCAL_IP:$client_port \
-    --advertise-client-urls http://$LOCAL_IP:$client_port \
-    --listen-peer-urls http://$LOCAL_IP:$peer_port \
-    --initial-advertise-peer-urls http://$LOCAL_IP:$peer_port \
-    --initial-cluster-token $CLUSTER_TOKEN \
-    --initial-cluster "$INITIAL_CLUSTER" \
-    --initial-cluster-state new \
-    --data-dir="$DATA_PATH" \
-    --logger=zap \
-    --metrics=extensive \
-    > "$LOG_DIR/$NODE_NAME-recovered.log" 2>&1 &
-
-  echo $! > "$LOG_DIR/$NODE_NAME.pid"
-  echo "Restarted node $node_name."
-}
-
-start_recovery_server() {
+run_benchmark() {
   local mode=$1
-  local i=$2
-  local peers=$3
-
-  local node_name="infra$i"
-  local port=$((50050 + i))
-  local log_file="$LOG_DIR/recovery_${node_name}.log"
-  local data_dir
-
-  echo "Logging to $log_file"
-
-  # Determine the data directory to use based on the mode
-  if [ "$mode" = "recover" ]; then
-    # Use the original data directory for recovery
-    data_dir="$DATA_DIR/$node_name"
-  else
-    # Copy the data directory to COPY_DIR for normal server mode
-    copy_data_directory "$node_name"
-    data_dir="$COPY_DIR/$node_name"
-  fi
-
-  # Run the server binary with the determined data directory
-  echo "Running server binary with mode: $mode, port: $port, data-dir: $data_dir, peers-file: $peers"
-  if $SERVER_BINARY --mode="$mode" --ip="$LOCAL_IP" --port="$port" --data-dir="$data_dir/member/wal" --peers-file="$peers" > "$log_file" 2>&1; then
-    if [ "$mode" = "recover" ]; then
-      echo "Recovery successful for $node_name. Restarting with recovered WAL..."
-      restart_etcd_with_recovered_wal "$i"
-    fi
-  fi
+  local total_requests=$2
+  local log_file=$3
+  $benchmark_tool put --endpoints=$endpoints --clients=100 --val-size=16 --sequential-keys --conns=100 --total=$total_requests > "$log_file"
 }
 
-# Function to collect metrics continuously in the background
 start_collecting_metrics() {
-  echo "Starting metrics collection..."
   while true; do
     TIMESTAMP=$(date +%s)
-    for i in $(seq 1 $TOTAL_NODES); do
-      client_port=$((2379 + (i - 1) * 10000))
-      METRIC_LINE=$(curl -s "http://$LOCAL_IP:$client_port/metrics" | grep '^etcd_server_proposals_committed_total ')
-      METRIC_VALUE=$(echo "$METRIC_LINE" | awk '{print $2}')
-
-      # Check if the metric fetch was successful and the value is numeric
-      if [[ -z "$METRIC_VALUE" || ! "$METRIC_VALUE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        METRIC_VALUE=0
-      fi
-
-      echo "$TIMESTAMP,infra$i,$METRIC_VALUE" >> $METRICS_LOG
+    for i in "${!IP_ADDRESSES[@]}"; do
+      NODE_IP="${IP_ADDRESSES[i]}"
+      metrics=$(ssh "$USERNAME@$NODE_IP" "curl -s http://$NODE_IP:2379/metrics")
+      echo "$TIMESTAMP,infra$((i + 1)),$metrics" >> "$output_dir/metrics.csv"
     done
-    sleep 2
+    sleep 5
   done &
-  echo $! > "$LOG_DIR/metrics_collector.pid"
-  echo "Metrics collection started in the background."
+  echo $! > "$output_dir/metrics_collector.pid"
 }
 
-# Function to stop metrics collection
 stop_collecting_metrics() {
-  echo "Stopping metrics collection..."
-  if [ -f "$LOG_DIR/metrics_collector.pid" ]; then
-    kill "$(cat $LOG_DIR/metrics_collector.pid)"
-    rm "$LOG_DIR/metrics_collector.pid"
-    echo "Metrics collection stopped."
-  else
-    echo "Metrics collector PID file not found."
+  if [ -f "$output_dir/metrics_collector.pid" ]; then
+    kill "$(cat $output_dir/metrics_collector.pid)" || true
+    rm "$output_dir/metrics_collector.pid"
   fi
 }
 
-cleanup() {
-  killall etcd
-  rm -rf $COPY_DIR
-  pkill -f metro_recovery ; pkill -f recovery_benchmark
-  killall etcd
-}
-
-# Main execution
-echo "Preparing benchmark environment..."
-start_etcd_cluster
-
-# Create the peers file for local test
-for i in $(seq 1 $TOTAL_NODES); do
-  echo "$LOCAL_IP:$((50050 + i))" >> $PEERS_FILE
-done
-
+# Main script logic
+prepare_data_dirs
 start_collecting_metrics
 
-# Perform initial PUT benchmark
-perform_put_benchmark $X_PUTS "initial_put_benchmark.out"
+for branch in "${branches[@]}"; do
+  echo "Checking out branch $branch..."
+  for ip in "${IP_ADDRESSES[@]}"; do
+    ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build"
+  done
 
-# Stop nodes
-stop_etcd_nodes
+  for value_rate in "${value_rate_pairs[@]}"; do
+    val_size=$(echo "$value_rate" | jq -r '.value_size')
+    rate=$(echo "$value_rate" | jq -r '.rate')
 
-# Wait for recovery
-echo "Waiting for $Z_WAIT seconds before recovery..."
-sleep $Z_WAIT
+    for proposal_count in "${proposals[@]}"; do
+      for i in $(seq 1 "$iterations"); do
+        echo "Starting iteration $i for branch $branch..."
+        start_etcd_cluster
+        sleep 3
+        start_collecting_metrics
 
-# Start continuous PUT benchmark in the background
-#perform_put_benchmark $X_PUTS "failure_put_benchmark.out"
+        run_benchmark $proposal_count "$output_dir/${branch}_warmup_${i}.log"
 
-echo "Starting recovery server on all nodes (both healthy and recovering)..."
-declare -a RECOVERY_PIDS
-declare -a SERVER_PIDS
+        echo "Simulating node failures..."
+        stop_nodes
 
-for i in $(seq 1 $TOTAL_NODES); do
-  if [ "$i" -le "$Y_KILLS" ]; then
-    # Start recovery mode for killed nodes and run in the background
-    start_recovery_server "recover" $i $PEERS_FILE &
-    RECOVERY_PIDS[$i]=$! # Capture the PID for recover mode
-  else
-    # Start server mode for healthy nodes and run in the background
-    start_recovery_server "server" $i $PEERS_FILE &
-    SERVER_PIDS[$i]=$! # Capture the PID for server mode
-  fi
+        start_healthy_servers
+
+        sleep $sleep_time
+
+        echo "Starting faulty servers..."
+        start_faulty_servers
+
+        sleep $sleep_time
+        run_benchmark $proposal_count "$output_dir/${branch}_benchmark_${i}_proposals_${proposal_count}.log"
+
+        echo "Iteration $i completed for branch $branch."
+      done
+    done
+  done
 done
-
-for pid in "${RECOVERY_PIDS[@]}"; do
-  if [ -n "$pid" ]; then
-    wait $pid
-    if [ $? -eq 0 ]; then
-      echo "Recovery server process $pid completed successfully."
-    else
-      echo "Recovery server process $pid failed."
-    fi
-  fi
-done
-
-# Kill all recovery processes
-echo "Killing recovery processes..."
-for pid in "${RECOVERY_PIDS[@]}"; do
-  if [ -n "$pid" ]; then
-    kill "$pid" 2>/dev/null
-    echo "Killed recovery process $pid."
-  fi
-done
-
-# Kill all server mode processes
-echo "Killing server mode processes..."
-for pid in "${SERVER_PIDS[@]}"; do
-  if [ -n "$pid" ]; then
-    kill "$pid" 2>/dev/null
-    echo "Killed server process $pid."
-  fi
-done
-
-perform_put_benchmark $X_PUTS "recovery_put_benchmark.out"
 
 stop_collecting_metrics
-
-echo "Benchmark completed. Metrics logged in $METRICS_LOG."
-
-trap cleanup EXIT
-trap cleanup SIGINT SIGTERM
+echo "Cloud benchmarking complete."
