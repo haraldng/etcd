@@ -20,36 +20,36 @@ import (
 // WALServer is our implementation of the WALServiceServer interface
 type WALServer struct {
 	pb.UnimplementedWALServiceServer
-	mu      sync.Mutex // Protect the entries map
-	peers   []string   // List of peer addresses for recovery
-	dataDir string     // Path to the WAL directory
+	mu          sync.Mutex // Protect the entries map
+	peers       []string   // List of peer addresses for recovery
+	dataDir     string     // Path to the WAL directory
+	myWAL       walutil.NodeWAL
+	myLastIndex uint64
 }
 
 // NewWALServer initializes the server with mock data and peers
 func NewWALServer(peers []string, dataDir string) *WALServer {
+	myWAL, err := walutil.ReadWALEntries(dataDir)
+	if err != nil {
+		log.Fatalf("Failed to read WAL: %v", err)
+	}
+	myLastIndex := myWAL.Entries[len(myWAL.Entries)-1].Index
+
 	return &WALServer{
-		peers:   peers,
-		dataDir: dataDir,
+		peers:       peers,
+		dataDir:     dataDir,
+		myWAL:       myWAL,
+		myLastIndex: myLastIndex,
 	}
 }
 
 // GetMissingEntries handles gRPC requests for missing entries
 func (s *WALServer) GetMissingEntries(ctx context.Context, req *pb.MissingEntriesRequest) (*pb.MissingEntriesResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	myWAL, err := walutil.ReadWALEntries(s.dataDir)
-	if err != nil {
-		log.Fatalf("Failed to read WAL: %v", err)
-	}
-
-	for _, e := range myWAL.Entries {
-		log.Printf("I have Entry: %v", e.Index)
-	}
-
 	var responseEntries []*pb.Entry
-	var missingIndex = 0
-	for _, e := range myWAL.Entries {
-		if missingIndex > len(myWAL.Entries) || missingIndex >= len(req.Indexes) {
+	var missingIndex uint64 = 0
+	numRequested := uint64(len(req.Indexes))
+	for _, e := range s.myWAL.Entries {
+		if missingIndex > s.myLastIndex || missingIndex >= numRequested {
 			break
 		}
 		if e.Index == req.Indexes[missingIndex] {
@@ -61,12 +61,7 @@ func (s *WALServer) GetMissingEntries(ctx context.Context, req *pb.MissingEntrie
 			missingIndex++
 		}
 	}
-	if missingIndex < len(req.Indexes) {
-		log.Printf("Missing entries: %v", req.Indexes[missingIndex:])
-	}
-	for _, e := range responseEntries {
-		log.Printf("Returning entry: %v", e.Index)
-	}
+	log.Printf("Returning %d missing entries.", len(responseEntries))
 	return &pb.MissingEntriesResponse{Entries: responseEntries}, nil
 }
 
@@ -83,12 +78,12 @@ func (s *WALServer) recoverWAL() {
 	if len(missingIndexes) == 0 {
 		fmt.Println("No missing entries detected.")
 		return
+	} else {
+		fmt.Printf("Missing %v entries\n", len(missingIndexes))
 	}
 
 	firstEntry := myWAL.Entries[0]
 	log.Printf("HS: %v, First entry: %v", myWAL.State, firstEntry)
-
-	fmt.Printf("Missing indexes: %v\n", missingIndexes)
 
 	// Request missing entries from peers
 	var collectedEntries []*pb.Entry
@@ -97,6 +92,7 @@ func (s *WALServer) recoverWAL() {
 	// If no entries were collected, exit
 	if len(collectedEntries) == 0 {
 		fmt.Println("No missing entries could be retrieved from peers.")
+		os.Exit(1) // Exit with code 1 to indicate failure
 		return
 	}
 
@@ -115,18 +111,14 @@ func (s *WALServer) recoverWAL() {
 	mergedWAL := walutil.MergeEntries(myWAL, missingRaftEntries)
 	fmt.Println("Missing entries successfully merged into the WAL.")
 
-	for _, entry := range mergedWAL.Entries {
-		log.Printf("Merged entry: %v", entry.Index)
-	}
-
 	// Write the merged WAL back to the directory
 	err = walutil.WriteWAL(s.dataDir, mergedWAL)
 	if err != nil {
 		log.Fatalf("Failed to write merged WAL: %v", err)
 	}
 
-	// Request missing entries from peers
 	log.Println("Recovery process completed.")
+	os.Exit(0) // Exit with code 0 to indicate success
 }
 
 // requestMissingEntries sends requests for missing entries to all peers
