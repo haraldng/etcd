@@ -14,9 +14,12 @@ if ! [ -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 
+BENCHMARK_TOOL="go run ./tools/benchmark"
 RECOVERY_SCRIPT="./recovery.sh"
 SERVER_BIN="./metro_recovery/server/server"
 IP_FILE="cloud_bench_config.txt"
+WAL_SERVER_PORT=50051
+SLEEP=10
 
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$CONFIG_FILE"))
@@ -26,16 +29,11 @@ proposals=($(jq -r '.proposals[]' "$CONFIG_FILE"))
 output_dir=$(jq -r '.output_dir' "$CONFIG_FILE")
 iterations=$(jq -r '.iterations' "$CONFIG_FILE")
 base_data_dir=$(jq -r '.data_dir' "$CONFIG_FILE")
-sleep_time=$(jq -r '.sleep_time' "$CONFIG_FILE")
 etcd_binary=$(jq -r '.etcd_binary' "$CONFIG_FILE")
-benchmark_tool=$(jq -r '.benchmark_cmd' "$CONFIG_FILE")
 num_to_stop=$(jq -r '.nodes_to_stop' "$CONFIG_FILE")
-wal_server_port=50051
 
-output_dir=${output_dir:-"$(date +'%Y%m%d_%H%M%S')"}
 mkdir -p "$output_dir"
 cp "$CONFIG_FILE" "$output_dir/"
-
 
 if ! [ -f "$IP_FILE" ]; then
   echo "SSH configuration file $IP_FILE not found!"
@@ -53,7 +51,7 @@ PEERS_FILE="peers.txt"
 > "$PEERS_FILE" # Truncate the file if it exists
 
 for ip in "${IP_ADDRESSES[@]}"; do
-  echo ":$wal_server_port" >> "$PEERS_FILE"
+  echo ":$WAL_SERVER_PORT" >> "$PEERS_FILE"
 done
 
 # Synchronize peers.txt to all nodes
@@ -124,14 +122,13 @@ start_healthy_servers() {
     # Start the server in "server" mode using the copied data directory
     echo "Starting server program for healthy server $NODE_NAME..."
     ssh "$USERNAME@$NODE_IP" "
-      nohup $SERVER_BIN --mode=server --port=$wal_server_port \
+      nohup $SERVER_BIN --mode=server --port=$WAL_SERVER_PORT \
         --data-dir=$copy_dir --peers-file=$base_data_dir/peers.txt \
         > $server_log 2>&1 &
     "
     echo "Healthy server $NODE_NAME started with logs at $server_log."
   done
 }
-
 
 start_faulty_servers() {
   for i in $(seq 1 "$num_to_stop"); do
@@ -142,7 +139,7 @@ start_faulty_servers() {
     echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP..."
 
     # Execute the recovery script in the background
-    ssh "$USERNAME@$NODE_IP" "nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --port $wal_server_port \
+    ssh "$USERNAME@$NODE_IP" "nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --port $WAL_SERVER_PORT \
       --data-dir $base_data_dir/$NODE_NAME --peers-file $base_data_dir/peers.txt \
       --etcd-binary $etcd_binary --server-binary $SERVER_BIN \
       --cluster-token $CLUSTER_TOKEN --initial-cluster '$INITIAL_CLUSTER' \
@@ -156,7 +153,7 @@ run_benchmark() {
   local mode=$1
   local total_requests=$2
   local log_file=$3
-  $benchmark_tool put --endpoints=$endpoints --clients=100 --val-size=16 --sequential-keys --conns=100 --total=$total_requests > "$log_file"
+  $BENCHMARK_TOOL put --endpoints=$endpoints --clients=100 --val-size=16 --sequential-keys --conns=100 --total=$total_requests > "$log_file"
 }
 
 start_collecting_metrics() {
@@ -207,12 +204,12 @@ for branch in "${branches[@]}"; do
 
         start_healthy_servers
 
-        sleep $sleep_time
+        sleep $SLEEP
 
         echo "Starting faulty servers..."
         start_faulty_servers
 
-        sleep $sleep_time
+        sleep $SLEEP
         run_benchmark $proposal_count "$output_dir/${branch}_benchmark_${i}_proposals_${proposal_count}.log"
 
         echo "Iteration $i completed for branch $branch."

@@ -82,7 +82,12 @@ func (s *WALServer) recoverWAL() {
 
 	// Request missing entries from peers
 	var collectedEntries = make([]*pb.Entry, 0, len(s.missingIndexes))
-	collectedEntries = s.requestMissingEntries(s.missingIndexes)
+
+	if len(s.peers) == 2 {
+		collectedEntries = s.requestMissingEntriesForTwoPeers(s.missingIndexes)
+	} else {
+		collectedEntries = s.requestMissingEntries(s.missingIndexes)
+	}
 
 	// If no entries were collected, exit
 	if len(collectedEntries) == 0 {
@@ -151,6 +156,61 @@ func (s *WALServer) requestMissingEntries(missingIndexes []uint64) []*pb.Entry {
 	}
 	wg.Wait()
 
+	return collectedEntries
+}
+
+func (s *WALServer) requestMissingEntriesForTwoPeers(missingIndexes []uint64) []*pb.Entry {
+	var collectedEntries []*pb.Entry
+	var wg sync.WaitGroup
+	mu := &sync.Mutex{} // Protect the collectedEntries slice
+
+	if len(s.peers) != 2 {
+		log.Println("Error: This function is optimized for exactly 2 peers.")
+		return nil
+	}
+
+	// Split the missing indexes into two halves
+	mid := len(missingIndexes) / 2
+	firstHalf := missingIndexes[:mid]
+	secondHalf := missingIndexes[mid:]
+
+	peerRequests := []struct {
+		peer    string
+		indexes []uint64
+	}{
+		{s.peers[0], firstHalf},
+		{s.peers[1], secondHalf},
+	}
+
+	for _, request := range peerRequests {
+		wg.Add(1)
+		go func(peer string, indexes []uint64) {
+			defer wg.Done()
+			conn, err := grpc.Dial(peer, grpc.WithInsecure())
+			if err != nil {
+				log.Printf("Failed to connect to peer %s: %v", peer, err)
+				return
+			}
+			defer conn.Close()
+
+			client := pb.NewWALServiceClient(conn)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			req := &pb.MissingEntriesRequest{Indexes: indexes}
+			res, err := client.GetMissingEntries(ctx, req)
+			if err != nil {
+				log.Printf("Failed to fetch entries from peer %s: %v", peer, err)
+				return
+			}
+
+			mu.Lock()
+			collectedEntries = append(collectedEntries, res.Entries...)
+			mu.Unlock()
+		}(request.peer, request.indexes)
+	}
+
+	wg.Wait()
 	return collectedEntries
 }
 
