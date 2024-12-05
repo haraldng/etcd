@@ -41,3 +41,4 @@ Procfile
 /bench_results
 bench_config.json
 /metro_recovery/example
+/recovery-test

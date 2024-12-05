@@ -182,11 +182,20 @@ func (s *WALServer) requestMissingEntriesForTwoPeers(missingIndexes []uint64) []
 		{s.peers[1], secondHalf},
 	}
 
+	maxMsgSize := 1024 * 1024 * 50 // 50 MB
+
 	for _, request := range peerRequests {
 		wg.Add(1)
 		go func(peer string, indexes []uint64) {
 			defer wg.Done()
-			conn, err := grpc.Dial(peer, grpc.WithInsecure())
+			conn, err := grpc.Dial(
+				peer,
+				grpc.WithInsecure(),
+				grpc.WithDefaultCallOptions(
+					grpc.MaxCallRecvMsgSize(maxMsgSize), // Max incoming message size
+					grpc.MaxCallSendMsgSize(maxMsgSize), // Max outgoing message size
+				),
+			)
 			if err != nil {
 				log.Printf("Failed to connect to peer %s: %v", peer, err)
 				return
@@ -262,6 +271,8 @@ func main() {
 	ip := flag.String("ip", "", "IP address or hostname of the current server (required for peer filtering)")
 	flag.Parse()
 
+	fmt.Printf("Arguments: mode: %s, port: %s, datadir: %s, peers: %s, ip: %s", *mode, *port, *dataDir, *peersFile, *ip)
+
 	// Validate required fields
 	if *ip == "" {
 		log.Fatalf("You must specify the server IP or hostname using --ip.")
@@ -288,6 +299,6 @@ func main() {
 		fmt.Println("Recovery process triggered.")
 		select {} // Keep the program running
 	} else {
-		fmt.Println("Invalid mode. Use 'server' to start the server or 'recover' to trigger recovery.")
+		fmt.Printf("Invalid mode: %s. Use 'server' to start the server or 'recover' to trigger recovery.", *mode)
 	}
 }
