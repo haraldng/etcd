@@ -442,7 +442,7 @@ for branch in "${branches[@]}"; do
         sleep $SLEEP
 
         echo "Starting faulty servers..."
-        start_faulty_servers
+        start_faulty_servers $branch
         echo "ok"
 
         sleep $SLEEP
