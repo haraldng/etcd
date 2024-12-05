@@ -1,0 +1,13 @@
+{
+  "branches": ["metro-recovery"],
+  "nodes": [3],
+  "value_rate_pairs": [
+    { "value_size": 1024, "rate": 500 }
+  ],
+  "output_dir": "recovery-test",
+  "iterations": 1,
+  "data_dir": "recovery_test",
+  "sleep_time": 3,
+  "proposals": [5000],
+  "nodes_to_stop": 1
+}

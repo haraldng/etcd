@@ -16,7 +16,7 @@ fi
 
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$config_file"))
-nodes=($(jq -r '.nodes[]' "$config_file"))
+nodes_stop_pairs=($(jq -c '.nodes[]' "$config_file"))
 value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$config_file"))  # Parse value_rate_pairs as an array of tuples
 clients=($(jq -r '.clients[]' "$config_file"))
 use_snapshot=($(jq -r '.use_snapshot[]' "$config_file"))
@@ -99,7 +99,9 @@ for branch in "${branches[@]}"; do
         ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
     done
 
-    for node_count in "${nodes[@]}"; do
+    for node_stop in "${nodes[@]}"; do
+        node_count=$(echo "$value_rate" | jq -r '.nodes')
+        stop_count=$(echo "$value_rate" | jq -r '.stop')
         for value_rate in "${value_rate_pairs[@]}"; do
             # Extract value_size and rate from the tuple
             val_size=$(echo "$value_rate" | jq -r '.value_size')
@@ -159,6 +161,8 @@ for branch in "${branches[@]}"; do
                         echo "Running benchmark with $benchmark_requests requests, output to $output_file..."
                         $benchmark_tool $benchmark_cmd --total=$benchmark_requests > "$output_dir/$output_file"
 
+                        stop_nodes
+
                         # Stop etcd on each instance after the benchmark run
                         echo "Stopping etcd on all VMs after benchmark run $benchmark_counter/$total_benchmarks (iteration $i)..."
                         for ip in "${IP_ADDRESSES[@]}"; do
@@ -176,3 +180,133 @@ for branch in "${branches[@]}"; do
 done
 
 echo "Cloud benchmarking complete."
+
+stop_nodes() {
+  if ! $LOCAL_MODE; then
+    for i in $(seq 1 "$num_to_stop"); do
+      NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+      ssh "$USERNAME@$NODE_IP" "pkill etcd || true"
+    done
+  else
+    for i in $(seq 1 "$num_to_stop"); do
+      NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+      pkill etcd || true
+    done
+  fi
+}
+
+start_healthy_servers() {
+    for i in $(seq $((num_to_stop + 1)) "$nodes"); do
+      NODE_NAME="infra$i"
+      if ! $LOCAL_MODE; then
+        NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+        server_log="$output_dir/server_${NODE_NAME}.log"
+        data_dir="$base_data_dir/$NODE_NAME"
+        copy_dir="$base_data_dir/copied_$NODE_NAME"
+
+        echo "Preparing healthy server $NODE_NAME on $NODE_IP..."
+
+        # Ensure the data directory is copied to a separate location
+        ssh "$USERNAME@$NODE_IP" "
+          mkdir -p $copy_dir && \
+          cp -r $data_dir/* $copy_dir/ && \
+          echo 'Copied data directory for $NODE_NAME to $copy_dir.'
+        "
+
+        # Start the server in "server" mode using the copied data directory
+        echo "Starting server program for healthy server $NODE_NAME..."
+        ssh "$USERNAME@$NODE_IP" "
+          nohup $SERVER_BIN --mode=server --port=$WAL_SERVER_PORT \
+            --data-dir=$copy_dir --peers-file=$base_data_dir/peers.txt \
+            > $server_log 2>&1 &
+        "
+        echo "Healthy server $NODE_NAME started with logs at $server_log."
+      else
+        local port=$((50050 + i))
+        local log_file="$LOCAL_LOG_DIR/recovery_${node_name}.log"
+
+        # Copy the data directory to LOCAL_COPY_DIR for normal server mode
+        local_copy_data_directory "$NODE_NAME"
+        data_dir="$LOCAL_COPY_DIR/$NODE_NAME"
+
+        $LOCAL_SERVER_BINARY --mode="$mode" --ip="$LOCAL_IP" --port="$port" --data-dir="$data_dir/member/wal" --peers-file="$peers" > "$log_file" 2>&1;
+      fi
+    done
+}
+
+start_faulty_servers() {
+  for i in $(seq 1 "$num_to_stop"); do
+    NODE_NAME="infra$i"
+    if ! $LOCAL_MODE; then
+      NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
+      recovery_log="$output_dir/recover_${NODE_NAME}.log"
+
+      echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP..."
+
+      # Execute the recovery script in the background
+      ssh "$USERNAME@$NODE_IP" "nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --port $WAL_SERVER_PORT \
+        --data-dir $base_data_dir/$NODE_NAME --peers-file $base_data_dir/peers.txt \
+        --etcd-binary $etcd_binary --server-binary $SERVER_BIN \
+        --cluster-token $CLUSTER_TOKEN --initial-cluster '$INITIAL_CLUSTER' \
+        --output-dir $output_dir > $recovery_log 2>&1 &"
+
+      echo "Recovery script started for $NODE_NAME."
+    else
+      local port=$((50050 + i))
+      local log_file="$LOCAL_LOG_DIR/recovery_${node_name}.log"
+
+      data_dir="$LOCAL_DATA_DIR/$NODE_NAME"
+
+      if $SERVER_BINARY --mode="$mode" --ip="$LOCAL_IP" --port="$port" --data-dir="$data_dir/member/wal" --peers-file="$peers" > "$log_file" 2>&1; then
+        echo "Recovery successful for $node_name. Restarting with recovered WAL..."
+        local_restart_etcd_with_recovered_wal "$i"
+      fi
+    fi
+  done
+}
+
+# Function to copy the relevant directory structure and WAL
+local_copy_data_directory() {
+  local node_name=$1
+  local source_dir="$DATA_DIR/$node_name"
+  local target_dir="$LOCAL_COPY_DIR/$node_name"
+
+  echo "Copying entire data directory for $node_name..."
+  mkdir -p "$target_dir"
+
+  # Copy the entire source directory to the target directory
+  cp -r "$source_dir/" "$target_dir/"
+
+  echo "Copied data directory for $node_name to $target_dir."
+}
+
+# Function to restart an etcd node with the recovered data directory
+local_restart_etcd_with_recovered_wal() {
+  local i=$1
+
+  echo "Preparing to restart etcd node $node_name with recovered WAL..."
+
+  NODE_NAME="infra$i"
+  DATA_PATH="$DATA_DIR/$NODE_NAME"
+
+  # Calculate ports for client and peer connections based on index
+  client_port=$((2379 + (i - 1) * 10000))
+  peer_port=$((2380 + (i - 1) * 10000))
+  cluster_members+="${infra_name}=http://$LOCAL_IP:${peer_port},"
+
+  nohup $ETCD_BINARY --name $NODE_NAME \
+    --listen-client-urls http://$LOCAL_IP:$client_port \
+    --advertise-client-urls http://$LOCAL_IP:$client_port \
+    --listen-peer-urls http://$LOCAL_IP:$peer_port \
+    --initial-advertise-peer-urls http://$LOCAL_IP:$peer_port \
+    --initial-cluster-token $CLUSTER_TOKEN \
+    --initial-cluster "$INITIAL_CLUSTER" \
+    --initial-cluster-state new \
+    --data-dir="$DATA_PATH" \
+    --logger=zap \
+    --metrics=extensive \
+    > "$LOG_DIR/$NODE_NAME-recovered.log" 2>&1 &
+
+  echo $! > "$LOG_DIR/$NODE_NAME.pid"
+  echo "Restarted node $node_name."
+}

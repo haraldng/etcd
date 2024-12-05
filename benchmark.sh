@@ -17,7 +17,7 @@ fi
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$config_file"))
 nodes=($(jq -r '.nodes[]' "$config_file"))
-value_sizes=($(jq -r '.value_sizes[]' "$config_file"))
+value_rate_pairs=($(jq -c '.value_rate_pairs[]' "$config_file"))  # Parse value_rate_pairs as an array of tuples
 warmup_requests=$(jq -r '.request_count.warmup' "$config_file")
 benchmark_requests=$(jq -r '.request_count.benchmark' "$config_file")
 output_dir=$(jq -r '.output_dir' "$config_file")
@@ -25,6 +25,7 @@ clients=($(jq -r '.clients[]' "$config_file"))
 iterations=$(jq -r '.iterations' "$config_file")
 data_dir=$(jq -r '.data_dir' "$config_file")
 quota_backend_bytes=$(jq -r '.quota_backend_bytes' "$config_file")
+output_dir=$(jq -r '.output_dir' "$config_file")
 
 # Use a default directory if not set
 if [ -z "$output_dir" ] || [ "$output_dir" == "null" ]; then
