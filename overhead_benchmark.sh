@@ -41,7 +41,7 @@ output_dir=$(jq -r '.output_dir' "$CONFIG_FILE")
 iterations=$(jq -r '.iterations' "$CONFIG_FILE")
 base_data_dir=$(jq -r '.data_dir' "$CONFIG_FILE")
 num_to_stop=$(jq -r '.nodes_to_stop' "$CONFIG_FILE")
-quorum_size=$(jq -r '.quorum_size[]' "$CONFIG_FILE")
+quorum_size=($(jq -r '.quorum_size[]' "$CONFIG_FILE"))
 # local constants
 LOCAL_LOG_DIR="local_test"
 LOCAL_DATA_DIR="local_test"
