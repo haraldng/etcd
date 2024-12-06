@@ -41,7 +41,7 @@ START_TIME=$(date +%s%3N | sed 's/[^0-9]//g') # Record the start time in millise
 $SERVER_BINARY --mode=recover --ip=$IP --port=$PORT --data-dir=$DATA_DIR --peers-file=$PEERS_FILE --stats-file=$RESULTS_FILE > "$LOG_FILE"
 END_TIME=$(date +%s%3N | sed 's/[^0-9]//g') # Record the end time in milliseconds
 echo "Start time: $START_TIME, End time: $END_TIME"
-echo  $((END_TIME - START_TIME)) > $RESULTS_FILE
+#echo  $((END_TIME - START_TIME)) > $RESULTS_FILE
   # Start the recovery server
 #  if $
 #    END_TIME=$(date +%s%3N | sed 's/[^0-9]//g') # Record the end time in milliseconds
