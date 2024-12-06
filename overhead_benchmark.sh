@@ -49,6 +49,11 @@ LOCAL_COPY_DIR="/Users/haraldng/code/etcd/copied_data"
 LOCAL_SERVER_BINARY="./metro_recovery/server/server"
 LOCAL_IP="127.0.0.1"
 
+if $LOCAL_MODE; then
+  output_dir=$LOCAL_LOG_DIR
+  data_dir=$LOCAL_DATA_DIR
+fi
+
 mkdir -p "$output_dir"
 cp "$CONFIG_FILE" "$output_dir/"
 
@@ -233,6 +238,7 @@ start_healthy_servers() {
         ssh "$USERNAME@$NODE_IP" "cd etcd ;
           nohup $SERVER_BINARY --mode server --ip $NODE_IP --port $WAL_SERVER_PORT \
             --data-dir $iteration_data_dir/member/wal --peers-file peers.txt \
+            --quorum-size "$q" --release true
             > $server_log 2>&1 &
         "
         echo "Healthy server $NODE_NAME started with logs at $server_log."
@@ -240,9 +246,9 @@ start_healthy_servers() {
         local port=$((50050 + i))
         local log_file="$LOCAL_LOG_DIR/recovery_${NODE_NAME}.log"
 
-        data_dir="$LOCAL_COPY_DIR/$NODE_NAME"
+        data_dir="$LOCAL_DATA_DIR/$NODE_NAME"
 
-        nohup $LOCAL_SERVER_BINARY --mode server --ip "$LOCAL_IP" --port "$port" --data-dir "$data_dir/member/wal" --peers-file $PEERS_FILE --quorum_size "$q" > "$log_file" 2>&1 &
+        nohup $LOCAL_SERVER_BINARY --mode server --ip "$LOCAL_IP" --port "$port" --data-dir "$data_dir/member/wal" --peers-file $PEERS_FILE --quorum-size "$q" --release false > "$log_file" 2>&1 &
       fi
     done
 }
@@ -295,12 +301,14 @@ local_restart_etcd_with_recovered_wal() {
 start_faulty_servers() {
   local results_file=$1
   local iteration_data_dir=$2
+  local q=$3
   for i in $(seq 1 "$num_to_stop"); do
     NODE_NAME="infra$i"
 
     if ! $LOCAL_MODE; then
       NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
-      local recovery_log="$base_data_dir/recover_${NODE_NAME}.log"
+      local recovery_log="$base_data_dir/recovery_${NODE_NAME}.log"
+      OVERHEAD_FILE="$output_dir/$results_file"
 
       echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP..."
 
@@ -309,21 +317,21 @@ start_faulty_servers() {
         --data-dir $iteration_data_dir/member/wal --peers-file peers.txt \
         --etcd-binary $ETCD_BINARY --server-binary $SERVER_BINARY \
         --cluster-token $CLUSTER_TOKEN --initial-cluster $INITIAL_CLUSTER \
-        --output-dir $iteration_data_dir --results-file $results_file > $recovery_log 2>&1 &"
+        --output-dir $iteration_data_dir --results-file $OVERHEAD_FILE --quorum-size $q --release true > $recovery_log 2>&1 &"
 
       echo "Recovery script started for $NODE_NAME."
     else
       local port=$((50050 + i))
       local data_dir="$LOCAL_DATA_DIR/$NODE_NAME"
       local recovery_log="$LOCAL_LOG_DIR/recover_${NODE_NAME}.log"
-      OVERHEAD_FILE="$results_file-$NODE_NAME"
+      OVERHEAD_FILE="$LOCAL_LOG_DIR/$NODE_NAME-$results_file"
 
       nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --ip $LOCAL_IP --port $port \
         --data-dir $data_dir/member/wal --peers-file $PEERS_FILE \
         --etcd-binary $ETCD_BINARY --server-binary $SERVER_BINARY \
         --cluster-token $CLUSTER_TOKEN --initial-cluster $INITIAL_CLUSTER \
         --quorum-size $q \
-        --output-dir $data_dir --results-file $OVERHEAD_FILE > $recovery_log 2>&1 &
+        --output-dir $data_dir --results-file $OVERHEAD_FILE --release false > $recovery_log 2>&1 &
 
 #      if $SERVER_BINARY --mode="$mode" --ip="$LOCAL_IP" --port="$port" --data-dir="$data_dir/member/wal" --peers-file="$PEERS_FILE" > "$log_file" 2>&1; then
 #        echo "Recovery successful for $NODE_NAME. Restarting with recovered WAL..."
@@ -432,7 +440,7 @@ for branch in "${branches[@]}"; do
         for i in $(seq 1 "$iterations"); do
           echo "Benchmark $benchmark_counter: Branch=$branch, Nodes=$nodes, Value Size=$val_size, Rate=$rate, Proposal Count=$proposal_count, Quorum Size=$q"
           ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
-          output_file="${output_dir}/${branch},${nodes}-${q},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
+          output_file="${branch},${nodes}-${q},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
 
           echo "Stopping etcd processes and cleaning data directory on all VMs..."
           for ip in "${IP_ADDRESSES[@]}"; do

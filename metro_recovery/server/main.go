@@ -9,6 +9,7 @@ import (
 	"go.etcd.io/etcd/v3/metro_recovery/walutil"
 	"go.etcd.io/raft/v3/raftpb"
 	"google.golang.org/grpc"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -34,7 +35,8 @@ type WALServer struct {
 func NewWALServer(peers []string, dataDir string, statsFile string, quorumSize int) *WALServer {
 	//log.Printf("Reading WAL from %s...", dataDir)
 	myWAL, _, err := walutil.ReadWALWithDetails(dataDir, false)
-	metronome := NewMetronome(1, len(peers), quorumSize)
+	metronome := NewMetronome(1, len(peers)+1, quorumSize)
+	log.Printf("peer count + 1: %d, quorum size: %d, metronome order: %v", len(peers)+1, quorumSize, metronome.MyCriticalOrdering)
 	var recoveredEntries []raftpb.Entry
 	var missingIndexes []uint64
 	for _, entry := range myWAL.Entries {
@@ -49,6 +51,7 @@ func NewWALServer(peers []string, dataDir string, statsFile string, quorumSize i
 			}
 		}
 	}
+	log.Printf("Recovered %d entries, missing %d entries.", len(recoveredEntries), len(missingIndexes))
 
 	if err != nil {
 		log.Fatalf("Failed to read WAL: %v", err)
@@ -96,7 +99,7 @@ func (s *WALServer) recoverWAL() {
 
 	// Request missing entries from peers
 	var collectedEntries = make([]*pb.Entry, 0, len(s.missingIndexes))
-	s.requestMissingEntriesForNPeers(s.missingIndexes)
+	collectedEntries = s.requestMissingEntriesForNPeers(s.missingIndexes)
 
 	// If no entries were collected, exit
 	if len(collectedEntries) == 0 {
@@ -105,7 +108,7 @@ func (s *WALServer) recoverWAL() {
 		return
 	}
 
-	fmt.Printf("Collected %d missing entries.\n", len(collectedEntries))
+	//fmt.Printf("Collected %d missing entries.\n", len(collectedEntries))
 
 	// Merge collected entries into the WAL
 	var missingRaftEntries []raftpb.Entry
@@ -145,7 +148,7 @@ func (s *WALServer) writeStats(totalDuration time.Duration, mergedDuration time.
 	defer file.Close()
 
 	writer := bufio.NewWriter(file)
-	_, err = writer.WriteString(fmt.Sprintf("totalDuration,mergeDuration,missingEntries\n%v,%v,%v",
+	_, err = writer.WriteString(fmt.Sprintf("totalDuration,mergeDuration,missingEntries\n%v,%v,%v\n",
 		totalDuration.Milliseconds(), mergedDuration.Milliseconds(), len(s.missingIndexes)))
 	if err != nil {
 		log.Printf("Failed to write stats: %v", err)
@@ -308,7 +311,12 @@ func main() {
 	ip := flag.String("ip", "", "IP address or hostname of the current server (required for peer filtering)")
 	statsFile := flag.String("stats-file", "", "Path to the file to write recovery statistics")
 	quorumSize := flag.Int("quorum-size", 0, "Minimum number of peers required to achieve quorum")
+	release := flag.Bool("release", false, "Suppress all logs")
 	flag.Parse()
+
+	if *release {
+		log.SetOutput(io.Discard) // Suppress logs
+	}
 
 	if *ip == "" || *dataDir == "" || *peersFile == "" {
 		log.Fatalf("Required fields missing: ip, data-dir, or peers-file")
