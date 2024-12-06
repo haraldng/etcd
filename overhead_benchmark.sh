@@ -231,7 +231,7 @@ start_healthy_servers() {
         # Start the server in "server" mode using the copied data directory
         ssh "$USERNAME@$NODE_IP" "cd etcd ;
           nohup $SERVER_BINARY --mode server --ip $NODE_IP --port $WAL_SERVER_PORT \
-            --data-dir $iteration_data_dir --peers-file peers.txt \
+            --data-dir $iteration_data_dir/member/wal --peers-file peers.txt \
             > $server_log 2>&1 &
         "
         echo "Healthy server $NODE_NAME started with logs at $server_log."
