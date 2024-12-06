@@ -430,9 +430,9 @@ for branch in "${branches[@]}"; do
       benchmark_counter=$((benchmark_counter + 1))
       for q in "${quorum_size[@]}"; do
         for i in $(seq 1 "$iterations"); do
-          echo "Benchmark $benchmark_counter: Branch=$branch, Nodes=$nodes, Value Size=$val_size, Rate=$rate, Proposal Count=$proposal_count, Quorum Size=$quorum_size"
+          echo "Benchmark $benchmark_counter: Branch=$branch, Nodes=$nodes, Value Size=$val_size, Rate=$rate, Proposal Count=$proposal_count, Quorum Size=$q"
           ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
-          output_file="${output_dir}/${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
+          output_file="${output_dir}/${branch},${nodes}-${q},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
 
           echo "Stopping etcd processes and cleaning data directory on all VMs..."
           for ip in "${IP_ADDRESSES[@]}"; do
