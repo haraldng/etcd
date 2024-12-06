@@ -30,7 +30,7 @@ RECOVERY_SCRIPT="./overhead.sh"
 SERVER_BINARY="./metro_recovery/server/server"
 IP_FILE="cloud_bench_config.txt"
 WAL_SERVER_PORT=50051
-SLEEP=3
+SLEEP=5
 
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$CONFIG_FILE"))
@@ -129,7 +129,6 @@ prepare_data_dirs() {
       ssh "$USERNAME@$ip" "mkdir -p $base_data_dir && chmod -R u+rwx $base_data_dir" || { echo "ERROR: Failed to prepare directories on VM $ip"; exit 1; }
       ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
       ssh "$USERNAME@$ip" "mkdir -p $output_dir && chmod -R u+rwx $output_dir" || { echo "ERROR: Failed to prepare directories on VM $ip"; exit 1; }
-
     done
   fi
 }
@@ -310,14 +309,14 @@ start_faulty_servers() {
       local recovery_log="$base_data_dir/recovery_${NODE_NAME}.log"
       OVERHEAD_FILE="$output_dir/$results_file"
 
-      echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP..."
+      echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP. Overhead file: $OVERHEAD_FILE"
 
       # Execute the recovery script in the background
       ssh "$USERNAME@$NODE_IP" "cd etcd ; nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --ip $NODE_IP --port $WAL_SERVER_PORT \
         --data-dir $iteration_data_dir/member/wal --peers-file peers.txt \
         --etcd-binary $ETCD_BINARY --server-binary $SERVER_BINARY \
         --cluster-token $CLUSTER_TOKEN --initial-cluster $INITIAL_CLUSTER \
-        --output-dir $iteration_data_dir --results-file $OVERHEAD_FILE --quorum-size $q --release true > $recovery_log 2>&1 &"
+        --output-dir $iteration_data_dir --results-file $OVERHEAD_FILE --quorum-size $q --release false > $recovery_log 2>&1 &"
 
       echo "Recovery script started for $NODE_NAME."
     else
@@ -426,7 +425,7 @@ benchmark_counter=0
 for branch in "${branches[@]}"; do
   echo "Checking out branch $branch..."
   for ip in "${IP_ADDRESSES[@]}"; do
-    ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build"
+    ssh "$USERNAME@$ip" "cd etcd && git fetch && git checkout $branch && git pull && make build"
     ssh "$USERNAME@$ip" "cd etcd/metro_recovery/server ; go build -o server "
   done
 
