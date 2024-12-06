@@ -121,6 +121,9 @@ prepare_data_dirs() {
   if ! $LOCAL_MODE; then
     for ip in "${IP_ADDRESSES[@]}"; do
       ssh "$USERNAME@$ip" "mkdir -p $base_data_dir && chmod -R u+rwx $base_data_dir" || { echo "ERROR: Failed to prepare directories on VM $ip"; exit 1; }
+      ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
+      ssh "$USERNAME@$ip" "mkdir -p $output_dir && chmod -R u+rwx $output_dir" || { echo "ERROR: Failed to prepare directories on VM $ip"; exit 1; }
+
     done
   fi
 }
@@ -163,14 +166,15 @@ stop_nodes() {
 }
 
 start_etcd_cluster() {
-  local j=$1
+  local benchmark_counter=$1
+  local j=$2
   ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${j}"
   NODE_LOG="$ITERATION_DATA_DIR/etcd.log"
   if ! $LOCAL_MODE; then
     for i in "${!IP_ADDRESSES[@]}"; do
       NODE_NAME="infra$((i + 1))"
       NODE_IP="${IP_ADDRESSES[i]}"
-      ssh "$USERNAME@$NODE_IP" "nohup $ETCD_BINARY --name $NODE_NAME \
+      ssh "$USERNAME@$NODE_IP" "mkdir -p $ITERATION_DATA_DIR ; cd etcd ; nohup $ETCD_BINARY --name $NODE_NAME \
         --listen-client-urls http://$NODE_IP:2379 \
         --advertise-client-urls http://$NODE_IP:2379 \
         --listen-peer-urls http://$NODE_IP:2380 \
@@ -214,21 +218,20 @@ start_etcd_cluster() {
 }
 
 start_healthy_servers() {
+  local iteration_data_dir=$1
     for i in $(seq $((num_to_stop + 1)) "$nodes"); do
       NODE_NAME="infra$i"
       echo "Starting server program for healthy server $NODE_NAME..."
       if ! $LOCAL_MODE; then
         NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
-        server_log="$base_data_dir/server_${NODE_NAME}.log"
-        data_dir="$base_data_dir/$NODE_NAME"
-        copy_dir="$base_data_dir/copied_$NODE_NAME"
+        server_log="$iteration_data_dir/server_${NODE_NAME}.log"
 
         echo "Preparing healthy server $NODE_NAME on $NODE_IP..."
 
         # Start the server in "server" mode using the copied data directory
-        ssh "$USERNAME@$NODE_IP" "
+        ssh "$USERNAME@$NODE_IP" "cd etcd ;
           nohup $SERVER_BINARY --mode server --ip $NODE_IP --port $WAL_SERVER_PORT \
-            --data-dir $copy_dir --peers-file $base_data_dir/peers.txt \
+            --data-dir $iteration_data_dir --peers-file peers.txt \
             > $server_log 2>&1 &
         "
         echo "Healthy server $NODE_NAME started with logs at $server_log."
@@ -290,29 +293,29 @@ local_restart_etcd_with_recovered_wal() {
 
 start_faulty_servers() {
   local results_file=$1
+  local iteration_data_dir=$2
   for i in $(seq 1 "$num_to_stop"); do
     NODE_NAME="infra$i"
 
     if ! $LOCAL_MODE; then
-      OVERHEAD_FILE="$base_data_dir/$NODE_NAME-$results_file"
       NODE_IP="${IP_ADDRESSES[$((i - 1))]}"
       local recovery_log="$base_data_dir/recover_${NODE_NAME}.log"
 
       echo "Starting recovery script for faulty server $NODE_NAME on $NODE_IP..."
 
       # Execute the recovery script in the background
-      ssh "$USERNAME@$NODE_IP" "nohup cd etcd; $RECOVERY_SCRIPT --node-name $NODE_NAME --ip $NODE_IP --port $WAL_SERVER_PORT \
-        --data-dir $base_data_dir/$NODE_NAME/member/wal --peers-file peers.txt \
+      ssh "$USERNAME@$NODE_IP" "cd etcd ; nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --ip $NODE_IP --port $WAL_SERVER_PORT \
+        --data-dir $iteration_data_dir/member/wal --peers-file peers.txt \
         --etcd-binary $ETCD_BINARY --server-binary $SERVER_BINARY \
         --cluster-token $CLUSTER_TOKEN --initial-cluster $INITIAL_CLUSTER \
-        --output-dir $base_data_dir --results-file $OVERHEAD_FILE > $recovery_log 2>&1 &"
+        --output-dir $iteration_data_dir --results-file $results_file > $recovery_log 2>&1 &"
 
       echo "Recovery script started for $NODE_NAME."
     else
       local port=$((50050 + i))
       local data_dir="$LOCAL_DATA_DIR/$NODE_NAME"
       local recovery_log="$LOCAL_LOG_DIR/recover_${NODE_NAME}.log"
-      OVERHEAD_FILE="$output_dir/$NODE_NAME-$results_file"
+      OVERHEAD_FILE="$results_file-$NODE_NAME"
 
       nohup $RECOVERY_SCRIPT --node-name $NODE_NAME --ip $LOCAL_IP --port $port \
         --data-dir $data_dir/member/wal --peers-file $PEERS_FILE \
@@ -408,10 +411,13 @@ local_cleanup() {
 # Main script logic
 prepare_data_dirs
 
+benchmark_counter=0
+
 for branch in "${branches[@]}"; do
   echo "Checking out branch $branch..."
   for ip in "${IP_ADDRESSES[@]}"; do
     ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build"
+    ssh "$USERNAME@$ip" "cd etcd/metro_recovery/server ; go build -o server "
   done
 
   for value_rate in "${value_rate_pairs[@]}"; do
@@ -419,10 +425,19 @@ for branch in "${branches[@]}"; do
     rate=$(echo "$value_rate" | jq -r '.rate')
 
     for proposal_count in "${proposals[@]}"; do
+      benchmark_counter=$((benchmark_counter + 1))
       for i in $(seq 1 "$iterations"); do
-        output_file="${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
+        ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
+        output_file="${output_dir}/${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
+
+        echo "Stopping etcd processes and cleaning data directory on all VMs..."
+        for ip in "${IP_ADDRESSES[@]}"; do
+            ssh "$USERNAME@$ip" "killall etcd || true" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
+            ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
+        done
+
         echo "Starting iteration $i for branch $branch..."
-        start_etcd_cluster i
+        start_etcd_cluster $benchmark_counter $i
         sleep 10
 #        start_collecting_metrics $output_file
 
@@ -433,29 +448,42 @@ for branch in "${branches[@]}"; do
         sleep $SLEEP
 
         echo "Starting recovery servers..."
-        start_healthy_servers
+        start_healthy_servers $ITERATION_DATA_DIR
         echo "ok"
         sleep $SLEEP
 
         echo "Starting faulty servers..."
-        start_faulty_servers $output_file
+        start_faulty_servers $output_file $ITERATION_DATA_DIR
 
         sleep $SLEEP
-
-
 
 #        run_benchmark $val_size $proposal_count $rate "$output_dir/${branch}_benchmark_${i}_proposals_${proposal_count}.log"
 #        stop_collecting_metrics
         echo "Iteration $i completed for branch $branch."
+        # Stop etcd on each instance after the benchmark run
+
+        echo "Sleeping for $SLEEP seconds to allow the cluster to stabilize..."
+        sleep "$SLEEP"
+
+        echo "Stopping etcd on all VMs after benchmark run $benchmark_counter (iteration $i)..."
+        if ! $LOCAL_MODE; then
+          for j in $(seq 1 "$num_to_stop"); do
+            NODE_NAME="infra$j"
+            NODE_IP="${IP_ADDRESSES[$((j - 1))]}"
+            scp "$USERNAME@$NODE_IP:$output_file" "$output_dir/${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count},$NODE_NAME-${i}.out"
+          done
+
+          for ip in "${IP_ADDRESSES[@]}"; do
+              ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
+              ssh "$USERNAME@$ip" "sudo rm -rf $ITERATION_DATA_DIR || { echo 'WARNING: Failed to remove some files in $ITERATION_DATA_DIR on VM $ip'; }"
+          done
+        else
+          local_cleanup
+        fi
       done
     done
   done
 done
-
-
-if ! $LOCAL_MODE; then
-  local_cleanup
-fi
 
 trap local_cleanup EXIT
 trap local_cleanup SIGINT SIGTERM

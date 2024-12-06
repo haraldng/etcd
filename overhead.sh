@@ -38,7 +38,7 @@ start_etcd() {
 echo "Recovery args: $NODE_NAME, $PORT, $DATA_DIR, $PEERS_FILE, $ETCD_BINARY, $SERVER_BINARY, $CLUSTER_TOKEN, $INITIAL_CLUSTER, $OUTPUT_DIR"
 
 START_TIME=$(date +%s%3N | sed 's/[^0-9]//g') # Record the start time in milliseconds
-$SERVER_BINARY --mode=recover --ip=$IP --port=$PORT --data-dir=$DATA_DIR --peers-file=$PEERS_FILE > "$LOG_FILE"
+$SERVER_BINARY --mode=recover --ip=$IP --port=$PORT --data-dir=$DATA_DIR --peers-file=$PEERS_FILE --stats-file=$RESULTS_FILE > "$LOG_FILE"
 END_TIME=$(date +%s%3N | sed 's/[^0-9]//g') # Record the end time in milliseconds
 echo "Start time: $START_TIME, End time: $END_TIME"
 echo  $((END_TIME - START_TIME)) > $RESULTS_FILE
