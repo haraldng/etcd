@@ -41,6 +41,7 @@ output_dir=$(jq -r '.output_dir' "$CONFIG_FILE")
 iterations=$(jq -r '.iterations' "$CONFIG_FILE")
 base_data_dir=$(jq -r '.data_dir' "$CONFIG_FILE")
 num_to_stop=$(jq -r '.nodes_to_stop' "$CONFIG_FILE")
+quorum_size=$(jq -r '.quorum_size[]' "$CONFIG_FILE")
 # local constants
 LOCAL_LOG_DIR="local_test"
 LOCAL_DATA_DIR="local_test"
@@ -219,6 +220,7 @@ start_etcd_cluster() {
 
 start_healthy_servers() {
   local iteration_data_dir=$1
+  local q=$2
     for i in $(seq $((num_to_stop + 1)) "$nodes"); do
       NODE_NAME="infra$i"
       echo "Starting server program for healthy server $NODE_NAME..."
@@ -241,7 +243,7 @@ start_healthy_servers() {
 
         data_dir="$LOCAL_COPY_DIR/$NODE_NAME"
 
-        nohup $LOCAL_SERVER_BINARY --mode server --ip "$LOCAL_IP" --port "$port" --data-dir "$data_dir/member/wal" --peers-file $PEERS_FILE > "$log_file" 2>&1 &
+        nohup $LOCAL_SERVER_BINARY --mode server --ip "$LOCAL_IP" --port "$port" --data-dir "$data_dir/member/wal" --peers-file $PEERS_FILE --quorum_size "$q" > "$log_file" 2>&1 &
       fi
     done
 }
@@ -321,6 +323,7 @@ start_faulty_servers() {
         --data-dir $data_dir/member/wal --peers-file $PEERS_FILE \
         --etcd-binary $ETCD_BINARY --server-binary $SERVER_BINARY \
         --cluster-token $CLUSTER_TOKEN --initial-cluster $INITIAL_CLUSTER \
+        --quorum-size $q \
         --output-dir $data_dir --results-file $OVERHEAD_FILE > $recovery_log 2>&1 &
 
 #      if $SERVER_BINARY --mode="$mode" --ip="$LOCAL_IP" --port="$port" --data-dir="$data_dir/member/wal" --peers-file="$PEERS_FILE" > "$log_file" 2>&1; then
@@ -426,60 +429,63 @@ for branch in "${branches[@]}"; do
 
     for proposal_count in "${proposals[@]}"; do
       benchmark_counter=$((benchmark_counter + 1))
-      for i in $(seq 1 "$iterations"); do
-        ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
-        output_file="${output_dir}/${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
+      for q in "${quorum_size[@]}"; do
+        for i in $(seq 1 "$iterations"); do
+          echo "Benchmark $benchmark_counter: Branch=$branch, Nodes=$nodes, Value Size=$val_size, Rate=$rate, Proposal Count=$proposal_count, Quorum Size=$quorum_size"
+          ITERATION_DATA_DIR="$base_data_dir/${benchmark_counter}-${i}"
+          output_file="${output_dir}/${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count}-${i}.out"
 
-        echo "Stopping etcd processes and cleaning data directory on all VMs..."
-        for ip in "${IP_ADDRESSES[@]}"; do
-            ssh "$USERNAME@$ip" "killall etcd || true" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
-            ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
-        done
-
-        echo "Starting iteration $i for branch $branch..."
-        start_etcd_cluster $benchmark_counter $i
-        sleep 10
-#        start_collecting_metrics $output_file
-
-        run_benchmark $val_size $proposal_count $rate "$output_dir/${branch}_warmup_${i}.log"
-
-        echo "Stopping all nodes"
-        stop_nodes
-        sleep $SLEEP
-
-        echo "Starting recovery servers..."
-        start_healthy_servers $ITERATION_DATA_DIR
-        echo "ok"
-        sleep $SLEEP
-
-        echo "Starting faulty servers..."
-        start_faulty_servers $output_file $ITERATION_DATA_DIR
-
-        sleep $SLEEP
-
-#        run_benchmark $val_size $proposal_count $rate "$output_dir/${branch}_benchmark_${i}_proposals_${proposal_count}.log"
-#        stop_collecting_metrics
-        echo "Iteration $i completed for branch $branch."
-        # Stop etcd on each instance after the benchmark run
-
-        echo "Sleeping for $SLEEP seconds to allow the cluster to stabilize..."
-        sleep "$SLEEP"
-
-        echo "Stopping etcd on all VMs after benchmark run $benchmark_counter (iteration $i)..."
-        if ! $LOCAL_MODE; then
-          for j in $(seq 1 "$num_to_stop"); do
-            NODE_NAME="infra$j"
-            NODE_IP="${IP_ADDRESSES[$((j - 1))]}"
-            scp "$USERNAME@$NODE_IP:$output_file" "$output_dir/${branch},${nodes},${num_to_stop},${val_size},${rate},${proposal_count},$NODE_NAME-${i}.out"
-          done
-
+          echo "Stopping etcd processes and cleaning data directory on all VMs..."
           for ip in "${IP_ADDRESSES[@]}"; do
-              ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
-#              ssh "$USERNAME@$ip" "sudo rm -rf $ITERATION_DATA_DIR || { echo 'WARNING: Failed to remove some files in $ITERATION_DATA_DIR on VM $ip'; }"
+              ssh "$USERNAME@$ip" "killall etcd || true" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
+              ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
           done
-        else
-          local_cleanup
-        fi
+
+          echo "Starting iteration $i for branch $branch..."
+          start_etcd_cluster $benchmark_counter $i
+          sleep 10
+  #        start_collecting_metrics $output_file
+
+          run_benchmark $val_size $proposal_count $rate "$output_dir/${branch}_warmup_${i}.log"
+
+          echo "Stopping all nodes"
+          stop_nodes
+          sleep $SLEEP
+
+          echo "Starting recovery servers..."
+          start_healthy_servers $ITERATION_DATA_DIR $q
+          echo "ok"
+          sleep $SLEEP
+
+          echo "Starting faulty servers..."
+          start_faulty_servers $output_file $ITERATION_DATA_DIR $q
+
+          sleep $SLEEP
+
+  #        run_benchmark $val_size $proposal_count $rate "$output_dir/${branch}_benchmark_${i}_proposals_${proposal_count}.log"
+  #        stop_collecting_metrics
+          echo "Iteration $i completed for branch $branch."
+          # Stop etcd on each instance after the benchmark run
+
+          echo "Sleeping for $SLEEP seconds to allow the cluster to stabilize..."
+          sleep "$SLEEP"
+
+          echo "Stopping etcd on all VMs after benchmark run $benchmark_counter (iteration $i)..."
+          if ! $LOCAL_MODE; then
+            for j in $(seq 1 "$num_to_stop"); do
+              NODE_NAME="infra$j"
+              NODE_IP="${IP_ADDRESSES[$((j - 1))]}"
+              scp "$USERNAME@$NODE_IP:$output_file" "$output_dir/${branch},${nodes},${q},${num_to_stop},${val_size},${rate},${proposal_count},$NODE_NAME-${i}.out"
+            done
+
+            for ip in "${IP_ADDRESSES[@]}"; do
+                ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
+  #              ssh "$USERNAME@$ip" "sudo rm -rf $ITERATION_DATA_DIR || { echo 'WARNING: Failed to remove some files in $ITERATION_DATA_DIR on VM $ip'; }"
+            done
+          else
+            local_cleanup
+          fi
+        done
       done
     done
   done

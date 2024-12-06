@@ -20,31 +20,49 @@ import (
 // WALServer is our implementation of the WALServiceServer interface
 type WALServer struct {
 	pb.UnimplementedWALServiceServer
-	mu             sync.Mutex // Protect the entries map
-	peers          []string   // List of peer addresses for recovery
-	dataDir        string     // Path to the WAL directory
-	myWAL          walutil.NodeWAL
-	missingIndexes []uint64
-	myLastIndex    uint64
-	statsFile      string // Path to the stats file
+	mu               sync.Mutex // Protect the entries map
+	peers            []string   // List of peer addresses for recovery
+	dataDir          string     // Path to the WAL directory
+	myWAL            walutil.NodeWAL
+	missingIndexes   []uint64
+	myLastIndex      uint64
+	statsFile        string // Path to the stats file
+	recoveredEntries []raftpb.Entry
 }
 
 // NewWALServer initializes the server with mock data and peers
-func NewWALServer(peers []string, dataDir string, statsFile string) *WALServer {
+func NewWALServer(peers []string, dataDir string, statsFile string, quorumSize int) *WALServer {
 	//log.Printf("Reading WAL from %s...", dataDir)
-	myWAL, missingIndexes, err := walutil.ReadWALWithDetails(dataDir, true)
+	myWAL, _, err := walutil.ReadWALWithDetails(dataDir, false)
+	metronome := NewMetronome(1, len(peers), quorumSize)
+	var recoveredEntries []raftpb.Entry
+	var missingIndexes []uint64
+	for _, entry := range myWAL.Entries {
+		if entry.Type == raftpb.EntryConfChange {
+			recoveredEntries = append(recoveredEntries, entry)
+		} else {
+			metronomeIdx := int(entry.Index) % metronome.TotalLen
+			if metronome.MyCriticalOrdering[metronomeIdx] {
+				recoveredEntries = append(recoveredEntries, entry)
+			} else {
+				missingIndexes = append(missingIndexes, entry.Index)
+			}
+		}
+	}
+
 	if err != nil {
 		log.Fatalf("Failed to read WAL: %v", err)
 	}
 	myLastIndex := myWAL.Entries[len(myWAL.Entries)-1].Index
 
 	return &WALServer{
-		peers:          peers,
-		dataDir:        dataDir,
-		myWAL:          myWAL,
-		missingIndexes: missingIndexes,
-		myLastIndex:    myLastIndex,
-		statsFile:      statsFile,
+		peers:            peers,
+		dataDir:          dataDir,
+		myWAL:            myWAL,
+		missingIndexes:   missingIndexes,
+		myLastIndex:      myLastIndex,
+		statsFile:        statsFile,
+		recoveredEntries: recoveredEntries,
 	}
 }
 
@@ -74,20 +92,11 @@ func (s *WALServer) GetMissingEntries(ctx context.Context, req *pb.MissingEntrie
 func (s *WALServer) recoverWAL() {
 	//log.Println("Starting recovery process...")
 
-	if len(s.missingIndexes) == 0 {
-		fmt.Println("No missing entries detected.")
-		return
-	}
-
 	startTime := time.Now()
 
 	// Request missing entries from peers
 	var collectedEntries = make([]*pb.Entry, 0, len(s.missingIndexes))
-	if len(s.peers) == 2 {
-		collectedEntries = s.requestMissingEntriesForTwoPeers(s.missingIndexes)
-	} else {
-		collectedEntries = s.requestMissingEntries(s.missingIndexes)
-	}
+	s.requestMissingEntriesForNPeers(s.missingIndexes)
 
 	// If no entries were collected, exit
 	if len(collectedEntries) == 0 {
@@ -184,32 +193,35 @@ func (s *WALServer) requestMissingEntries(missingIndexes []uint64) []*pb.Entry {
 	return collectedEntries
 }
 
-func (s *WALServer) requestMissingEntriesForTwoPeers(missingIndexes []uint64) []*pb.Entry {
+func (s *WALServer) requestMissingEntriesForNPeers(missingIndexes []uint64) []*pb.Entry {
 	var collectedEntries []*pb.Entry
 	var wg sync.WaitGroup
 	mu := &sync.Mutex{} // Protect the collectedEntries slice
 
-	if len(s.peers) != 2 {
-		log.Println("Error: This function is optimized for exactly 2 peers.")
+	peerCount := len(s.peers)
+	if peerCount == 0 {
+		log.Println("Error: No peers available to request missing entries.")
 		return nil
 	}
 
-	// Split the missing indexes into two halves
-	mid := len(missingIndexes) / 2
-	firstHalf := missingIndexes[:mid]
-	secondHalf := missingIndexes[mid:]
-
-	peerRequests := []struct {
-		peer    string
-		indexes []uint64
-	}{
-		{s.peers[0], firstHalf},
-		{s.peers[1], secondHalf},
+	// Determine chunk size for each peer
+	chunkSize := len(missingIndexes) / peerCount
+	if chunkSize == 0 {
+		chunkSize = 1
 	}
 
 	maxMsgSize := 1024 * 1024 * 50 // 50 MB
 
-	for _, request := range peerRequests {
+	for i, peer := range s.peers {
+		start := i * chunkSize
+		end := start + chunkSize
+		if i == peerCount-1 {
+			// Ensure the last peer gets all remaining entries
+			end = len(missingIndexes)
+		}
+
+		indexes := missingIndexes[start:end]
+
 		wg.Add(1)
 		go func(peer string, indexes []uint64) {
 			defer wg.Done()
@@ -241,7 +253,7 @@ func (s *WALServer) requestMissingEntriesForTwoPeers(missingIndexes []uint64) []
 			mu.Lock()
 			collectedEntries = append(collectedEntries, res.Entries...)
 			mu.Unlock()
-		}(request.peer, request.indexes)
+		}(peer, indexes)
 	}
 
 	wg.Wait()
@@ -249,8 +261,8 @@ func (s *WALServer) requestMissingEntriesForTwoPeers(missingIndexes []uint64) []
 }
 
 // startGRPCServer starts the gRPC server
-func startGRPCServer(port string, peers []string, dataDir string, statsFile string) {
-	server := NewWALServer(peers, dataDir, statsFile)
+func startGRPCServer(port string, peers []string, dataDir string, statsFile string, quorumSize int) {
+	server := NewWALServer(peers, dataDir, statsFile, quorumSize)
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Fatalf("Failed to listen on port %s: %v", port, err)
@@ -295,6 +307,7 @@ func main() {
 	peersFile := flag.String("peers-file", "", "Path to the file containing peer addresses (one per line)")
 	ip := flag.String("ip", "", "IP address or hostname of the current server (required for peer filtering)")
 	statsFile := flag.String("stats-file", "", "Path to the file to write recovery statistics")
+	quorumSize := flag.Int("quorum-size", 0, "Minimum number of peers required to achieve quorum")
 	flag.Parse()
 
 	if *ip == "" || *dataDir == "" || *peersFile == "" {
@@ -309,9 +322,9 @@ func main() {
 	}
 
 	if *mode == "server" {
-		startGRPCServer(*port, peers, *dataDir, *statsFile)
+		startGRPCServer(*port, peers, *dataDir, *statsFile, *quorumSize)
 	} else if *mode == "recover" {
-		server := NewWALServer(peers, *dataDir, *statsFile)
+		server := NewWALServer(peers, *dataDir, *statsFile, *quorumSize)
 		server.recoverWAL()
 	} else {
 		fmt.Printf("Invalid mode: %s. Use 'server' or 'recover'.", *mode)
