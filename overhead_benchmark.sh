@@ -30,7 +30,7 @@ RECOVERY_SCRIPT="./overhead.sh"
 SERVER_BINARY="./metro_recovery/server/server"
 IP_FILE="cloud_bench_config.txt"
 WAL_SERVER_PORT=50051
-SLEEP=10
+SLEEP=3
 
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$CONFIG_FILE"))
@@ -215,7 +215,6 @@ start_etcd_cluster() {
 
   echo "Local etcd cluster started."
   fi
-    sleep 10
 }
 
 start_healthy_servers() {
@@ -443,7 +442,7 @@ for branch in "${branches[@]}"; do
 
           echo "Starting iteration $i for branch $branch..."
           start_etcd_cluster $benchmark_counter $i
-          sleep 10
+          sleep $SLEEP
   #        start_collecting_metrics $output_file
 
           run_benchmark $val_size $proposal_count $rate "$output_dir/${branch}_warmup_${i}.log"
