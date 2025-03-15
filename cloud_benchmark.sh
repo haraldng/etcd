@@ -7,12 +7,25 @@ if [ $# -lt 1 ]; then
 fi
 
 config_file=$1
+ip_file=$2
 
 # Validate if the configuration file exists
 if ! [ -f "$config_file" ]; then
   echo "Configuration file $config_file not found!"
   exit 1
 fi
+
+# Validate if IP file exists
+if ! [ -f "$ip_file" ]; then
+  echo "IP file $ip_file not found!"
+  exit 1
+fi
+
+USERNAME=$(head -n 1 "$ip_file")
+IP_ADDRESSES=()
+while IFS= read -r line; do
+    IP_ADDRESSES+=("$line")
+done < <(tail -n +2 "$ip_file")
 
 # Parse configurations using jq
 branches=($(jq -r '.branches[]' "$config_file"))
@@ -52,20 +65,7 @@ mkdir -p "$output_dir"
 echo "Output directory: $output_dir"
 cp "$config_file" "$output_dir/"
 
-# SSH configuration file
-IP_FILE="cloud_bench_config.txt"
-
-# Validate if IP file exists
-if ! [ -f "$IP_FILE" ]; then
-  echo "SSH configuration file $IP_FILE not found!"
-  exit 1
-fi
-
 benchmark_tool="go run ./tools/benchmark"  # Replace with the path to the benchmark tool
-
-# Read SSH username and IPs
-USERNAME=$(head -n 1 "$IP_FILE")
-readarray -t IP_ADDRESSES < <(tail -n +2 "$IP_FILE")
 
 # Cluster token for etcd
 CLUSTER_TOKEN="etcd-cluster-1"
