@@ -27,6 +27,7 @@ while IFS= read -r line; do
     IP_ADDRESSES+=("$line")
 done < <(tail -n +2 "$ip_file")
 
+branches=($(jq -r '.branches[]' "$config_file"))
 use_snapshot=($(jq -r '.use_snapshot[]' "$config_file"))
 base_data_dir=$(jq -r '.data_dir' "$config_file")
 quota_backend_bytes=$(jq -r '.quota_backend_bytes' "$config_file")
@@ -111,33 +112,29 @@ for branch in "${branches[@]}"; do
         ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
     done
 
-    for node_count in "${nodes[@]}"; do
-        for branch in "${branches[@]}"; do
-            echo "Checking out branch $branch and rebuilding on each VM..."
-            for ip in "${IP_ADDRESSES[@]}"; do
-                ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
-            done
-            echo "Stopping etcd processes and cleaning data directory on all VMs..."
-            for ip in "${IP_ADDRESSES[@]}"; do
-                ssh "$USERNAME@$ip" "killall etcd || true" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
-                ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
-            done
-
-            echo "Starting etcd on all VMs..."
-            start_nodes
-
-            echo "Press Enter to stop VMs..."
-            read
-
-            echo "Are you sure? Press Enter again to confirm..."
-            read
-
-            # Stop etcd on each instance after the benchmark run
-            echo "Stopping etcd on all VMs..."
-            stop_nodes
-
-        done
+    echo "Checking out branch $branch and rebuilding on each VM..."
+    for ip in "${IP_ADDRESSES[@]}"; do
+        ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
     done
+    echo "Stopping etcd processes and cleaning data directory on all VMs..."
+    for ip in "${IP_ADDRESSES[@]}"; do
+        ssh "$USERNAME@$ip" "killall etcd || true" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }
+        ssh "$USERNAME@$ip" "sudo rm -rf $base_data_dir/* || { echo 'WARNING: Failed to remove some files in $base_data_dir on VM $ip'; }"
+    done
+
+    echo "Starting etcd on all VMs..."
+    start_nodes
+
+    echo "Press Enter to stop VMs..."
+    read
+
+    echo "Are you sure? Press Enter again to confirm..."
+    read
+
+    # Stop etcd on each instance after the benchmark run
+    echo "Stopping etcd on all VMs..."
+    stop_nodes
+
 done
 
 
