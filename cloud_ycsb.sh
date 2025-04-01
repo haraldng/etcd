@@ -89,7 +89,7 @@ restart_cluster() {
   kill -SIGINT $CLUSTER_PID
 
   echo "Starting the cluster..."
-  $START_CLUSTER_CMD "$config_file" "$ip_file" "true" | tee "$log_file" &
+  $START_CLUSTER_CMD "$config_file" "$ip_file" "true" > "$log_file"
   CLUSTER_PID=$!
   echo "Cluster PID: $CLUSTER_PID"
 
