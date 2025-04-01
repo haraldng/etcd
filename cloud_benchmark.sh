@@ -241,6 +241,7 @@ for branch in "${branches[@]}"; do
                               --initial-cluster-state new \
                               --log-level error \
                               --data-dir=$ITERATION_DATA_DIR \
+                              --metrics='extensive' \
                               $SNAPSHOT_FLAG \
                               $QUOTA_BACKEND_FLAG > $NODE_LOG 2>&1 &" || { echo "ERROR: Failed to start etcd on VM $NODE_IP"; exit 1; }
 
