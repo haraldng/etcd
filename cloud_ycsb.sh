@@ -41,8 +41,8 @@ run_benchmark() {
   local workload_command="$1"
   local output_file="$2"
 
-  # Run the YCSB command and capture output starting from "Run finished, takes"
-  $workload_command | awk '/Run finished, takes/{flag=1} flag' >> "$output_file"
+  # Print all output in real time, but only capture the relevant part in the output file
+  $workload_command | tee >(awk '/Run finished, takes/{flag=1} flag' >> "$output_file")
 }
 
 # Function to restart the cluster
@@ -60,7 +60,7 @@ restart_cluster() {
   wait $CLUSTER_PID
 
   echo "Starting the cluster..."
-  $START_CLUSTER_CMD "$config_file" "$cloud_config_file" > "$log_file" 2>&1 &
+  $START_CLUSTER_CMD "$config_file" "$cloud_config_file" | tee "$log_file" &
   CLUSTER_PID=$!
   echo "Cluster pid: $CLUSTER_PID"
 
