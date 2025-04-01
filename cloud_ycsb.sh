@@ -27,8 +27,21 @@ STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 # Etcd Versions and Configs
 # ================================
 
-ETCD_VERSIONS=("metronome" "etcd")
-BENCH_CONFIG_FILES=("metronome_bench_config.json" "etcd_bench_config.json")
+ETCD_VERSIONS=("etcd" "metronome")
+BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
+
+YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
+
+# Define workloads dynamically
+WORKLOAD_BASE_CMDS=(
+  "-p readproportion=1.0 -p updateproportion=0.0"   # Workload C
+  "-p readproportion=0.0 -p updateproportion=1.0"
+  "-p readproportion=0.5 -p updateproportion=0.5"   # Workload A
+  "-p readproportion=0.95 -p updateproportion=0.05" # Workload B
+  "-p readproportion=0.95 -p insertproportion=0.05" # Workload D
+)
+
+WORKLOAD_NAMES=("workload-c" "write" "workload-a" "workload-b" "workload-d")
 
 # ================================
 # Functions
@@ -122,19 +135,6 @@ echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
-
-YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
-
-# Define workloads dynamically
-WORKLOAD_BASE_CMDS=(
-  "-p readproportion=0.0 -p updateproportion=1.0"
-  "-p readproportion=0.5 -p updateproportion=0.5"   # Workload A
-  "-p readproportion=0.95 -p updateproportion=0.05" # Workload B
-  "-p readproportion=1.0 -p updateproportion=0.0"   # Workload C
-  "-p readproportion=0.95 -p insertproportion=0.05" # Workload D
-)
-
-WORKLOAD_NAMES=("write" "workload-a" "workload-b" "workload-c" "workload-d")
 
 # Loop through each etcd version
 for i in ${!ETCD_VERSIONS[@]}; do
