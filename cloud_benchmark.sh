@@ -2,7 +2,7 @@
 
 # Check if the configuration file is passed as an argument
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <config_file>"
+  echo "Usage: $0 <config_file> <ip_file>"
   exit 1
 fi
 
@@ -162,6 +162,48 @@ fetch_and_save_metrics() {
     done
 }
 
+start_nodes() {
+    for j in "${!IP_ADDRESSES[@]}"; do
+        NODE_NAME="infra$((j+1))"
+        NODE_IP="${IP_ADDRESSES[j]}"
+        NODE_LOG="$ITERATION_DATA_DIR/etcd.log"
+        SNAPSHOT_FLAG=""
+        QUOTA_BACKEND_FLAG=""
+        if [ "$quota_backend_bytes" != "null" ]; then
+            QUOTA_BACKEND_FLAG="--quota-backend-bytes=$quota_backend_bytes"
+        fi
+
+        if [ "$snap_enabled" == "false" ]; then
+            SNAPSHOT_FLAG="--snapshot-count=20000000"
+        fi
+
+        ssh "$USERNAME@$NODE_IP" "cd etcd; mkdir -p $ITERATION_DATA_DIR; nohup bin/etcd --name $NODE_NAME \
+          --listen-client-urls http://$NODE_IP:2379 \
+          --advertise-client-urls http://$NODE_IP:2379 \
+          --listen-peer-urls http://$NODE_IP:2380 \
+          --initial-advertise-peer-urls http://$NODE_IP:2380 \
+          --initial-cluster-token $CLUSTER_TOKEN \
+          --initial-cluster '$INITIAL_CLUSTER' \
+          --initial-cluster-state new \
+          --log-level error \
+          --data-dir=$ITERATION_DATA_DIR \
+          $SNAPSHOT_FLAG \
+          $QUOTA_BACKEND_FLAG > $NODE_LOG 2>&1 &" || { echo "ERROR: Failed to start etcd on VM $NODE_IP"; exit 1; }
+
+        echo "etcd started on $NODE_NAME ($NODE_IP). Logs at $NODE_LOG"
+    done
+}
+
+stop_nodes() {
+    for ip in "${IP_ADDRESSES[@]}"; do
+        ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
+    done
+
+    echo "Sleeping for $sleep_time seconds to allow the cluster to stabilize..."
+    sleep "$sleep_time"
+    ssh "$USERNAME@$ip" "sudo rm -rf $ITERATION_DATA_DIR || { echo 'WARNING: Failed to remove some files in $ITERATION_DATA_DIR on VM $ip'; }"
+}
+
 # Start benchmarking
 for branch in "${branches[@]}"; do
     echo "Checking out branch $branch and rebuilding on each VM..."
@@ -217,35 +259,7 @@ for branch in "${branches[@]}"; do
                         done
 
                         echo "Starting etcd on all VMs for benchmark run $benchmark_counter (iteration $i)..."
-                        for j in "${!IP_ADDRESSES[@]}"; do
-                            NODE_NAME="infra$((j+1))"
-                            NODE_IP="${IP_ADDRESSES[j]}"
-                            NODE_LOG="$ITERATION_DATA_DIR/etcd.log"
-                            SNAPSHOT_FLAG=""
-                            QUOTA_BACKEND_FLAG=""
-                            if [ "$quota_backend_bytes" != "null" ]; then
-                                QUOTA_BACKEND_FLAG="--quota-backend-bytes=$quota_backend_bytes"
-                            fi
-
-                            if [ "$snap_enabled" == "false" ]; then
-                                SNAPSHOT_FLAG="--snapshot-count=20000000"
-                            fi
-
-                            ssh "$USERNAME@$NODE_IP" "cd etcd; mkdir -p $ITERATION_DATA_DIR; nohup bin/etcd --name $NODE_NAME \
-                              --listen-client-urls http://$NODE_IP:2379 \
-                              --advertise-client-urls http://$NODE_IP:2379 \
-                              --listen-peer-urls http://$NODE_IP:2380 \
-                              --initial-advertise-peer-urls http://$NODE_IP:2380 \
-                              --initial-cluster-token $CLUSTER_TOKEN \
-                              --initial-cluster '$INITIAL_CLUSTER' \
-                              --initial-cluster-state new \
-                              --log-level error \
-                              --data-dir=$ITERATION_DATA_DIR \
-                              $SNAPSHOT_FLAG \
-                              $QUOTA_BACKEND_FLAG > $NODE_LOG 2>&1 &" || { echo "ERROR: Failed to start etcd on VM $NODE_IP"; exit 1; }
-
-                            echo "etcd started on $NODE_NAME ($NODE_IP). Logs at $NODE_LOG"
-                        done
+                        start_nodes
 
                         sleep 10  # Wait for etcd cluster to stabilize
 
@@ -268,13 +282,7 @@ for branch in "${branches[@]}"; do
 
                         # Stop etcd on each instance after the benchmark run
                         echo "Stopping etcd on all VMs after benchmark run $benchmark_counter/$total_benchmarks (iteration $i)..."
-                        for ip in "${IP_ADDRESSES[@]}"; do
-                            ssh "$USERNAME@$ip" "killall etcd" || { echo "ERROR: Failed to stop etcd on VM $ip"; }
-                        done
-
-                        echo "Sleeping for $sleep_time seconds to allow the cluster to stabilize..."
-                        sleep "$sleep_time"
-                        ssh "$USERNAME@$ip" "sudo rm -rf $ITERATION_DATA_DIR || { echo 'WARNING: Failed to remove some files in $ITERATION_DATA_DIR on VM $ip'; }"
+                        stop_nodes
                     done
                 done
             done
