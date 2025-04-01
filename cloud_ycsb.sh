@@ -19,7 +19,7 @@ ETCD_ENDPOINTS="10.128.15.210:2379,10.128.15.211:2379,10.128.15.212:2379"
 # Commands
 # ================================
 
-GO_YCSB_CMD="./../go_ycsb"
+GO_YCSB_CMD="./../go-ycsb"
 # Define the path to the start and stop cluster script
 START_CLUSTER_CMD="./start_cloud_nodes.sh"
 STOP_CLUSTER_CMD="stop_cluster.sh"
