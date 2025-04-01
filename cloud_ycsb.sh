@@ -68,6 +68,18 @@ restart_cluster() {
   sleep $SLEEP_CLUSTER_START
 }
 
+# Function to load initial data before running a workload
+load_data() {
+  local log_file="$1"
+
+  echo "Loading initial data into etcd..."
+  $GO_YCSB_CMD load etcd -p etcd.endpoints="10.128.15.210:2379" \
+    -p recordcount=20000 \
+    -p insertcount=20000 \
+    -p fieldcount=10 \
+    -p fieldlength=1024 | tee -a "$log_file"
+}
+
 # ================================
 # Main Script Logic
 # ================================
@@ -117,20 +129,16 @@ for i in ${!ETCD_VERSIONS[@]}; do
 
   echo "Benchmarking version: $VERSION using config: $CONFIG_FILE"
 
-  # Start the cluster in the background with logging
-  echo "Starting the cluster for $VERSION (logging to $CLUSTER_LOG_FILE)..."
-  $START_CLUSTER_CMD "$CONFIG_FILE" example_cloud_bench_config.txt > "$CLUSTER_LOG_FILE" 2>&1 &
-  CLUSTER_PID=$!
-
-  echo "Cluster pid: $CLUSTER_PID"
-
-  # Wait for a few seconds to ensure the cluster is up and running
-  sleep $SLEEP_CLUSTER_START
-
   # Outer loop: Iterate through all the workloads
   for j in ${!WORKLOAD_BASE_CMDS[@]}; do
     WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
     WORKLOAD_CMD="$GO_YCSB_CMD ${WORKLOAD_BASE_CMDS[0]} ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS"
+
+    # Restart the cluster after the workload completes
+    restart_cluster "$CONFIG_FILE" "example_cloud_bench_config.txt" "$CLUSTER_LOG_FILE"
+
+    # Load data into etcd before running workloads
+    load_data "$VERSION_OUTPUT_DIR/load.log"
 
     # Inner loop: Run each workload NUM_ITERATIONS times
     for k in $(seq 1 $NUM_ITERATIONS); do
@@ -138,11 +146,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
       OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
       run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE"
     done
-
-    # After completing all iterations for the current workload, restart the cluster
-    echo "Completed all iterations for workload $WORKLOAD_NAME. Restarting the cluster..."
-    restart_cluster "$CONFIG_FILE" "example_cloud_bench_config.txt" "$CLUSTER_LOG_FILE"  # Restart the cluster after the current workload
-
+    echo "Completed all iterations for workload $WORKLOAD_NAME."
   done
 
   # After completing all workloads for the current version, shutdown the cluster
