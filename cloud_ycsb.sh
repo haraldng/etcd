@@ -30,7 +30,6 @@ STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 ETCD_VERSIONS=("etcd" "metronome")
 BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
-YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
@@ -74,7 +73,7 @@ run_benchmark() {
 
   # Run the workload command normally and pipe the output directly to awk
   # Save the result of awk's pattern match directly to the output file
-  $workload_command | awk '/Run finished, takes/{flag=1} flag' > "$output_file"
+  $workload_command | awk '/Run finished, takes/{flag=1} flag' >> "$output_file"
 }
 
 # Function to restart the cluster
@@ -130,6 +129,7 @@ fi
 
 # Parse etcd endpoints from the provided config file
 parse_config "$IP_FILE"
+YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 
 echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 
