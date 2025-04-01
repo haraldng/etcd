@@ -72,8 +72,9 @@ run_benchmark() {
   local workload_command="$1"
   local output_file="$2"
 
-  # Show full output in the terminal, but only save the final summary to the file
-  $workload_command 2>&1 | tee >(awk '/Run finished, takes/{flag=1} flag' > "$output_file")
+  # Run the workload command normally and pipe the output directly to awk
+  # Save the result of awk's pattern match directly to the output file
+  $workload_command 2>&1 | awk '/Run finished, takes/{flag=1} flag' > "$output_file"
 }
 
 # Function to restart the cluster
@@ -120,6 +121,12 @@ fi
 IP_FILE="$1"
 OUTPUT_DIR="$2"
 SERIALIZABLE_READS="$3"
+
+# Validate if IP file exists
+if ! [ -f "$IP_FILE" ]; then
+  echo "IP file $IP_FILE not found!"
+  exit 1
+fi
 
 # Validate serializable_reads flag
 if [ "$SERIALIZABLE_READS" != "true" ] && [ "$SERIALIZABLE_READS" != "false" ]; then
