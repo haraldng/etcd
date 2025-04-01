@@ -21,7 +21,7 @@ ETCD_ENDPOINTS=""
 
 GO_YCSB_CMD="./../go-ycsb"
 START_CLUSTER_CMD="./start_cloud_nodes.sh"
-STOP_CLUSTER_CMD="stop_cluster.sh"
+STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 
 # ================================
 # Etcd Versions and Configs
@@ -59,8 +59,8 @@ run_benchmark() {
   local workload_command="$1"
   local output_file="$2"
 
-  # Run workload and save only the final part of the output
-  $workload_command | tee >(awk '/Run finished, takes/{flag=1} flag' >> "$output_file")
+  # Show full output in the terminal, but only save the final summary to the file
+  $workload_command 2>&1 | tee >(awk '/Run finished, takes/{flag=1} flag' > "$output_file")
 }
 
 # Function to restart the cluster
@@ -74,10 +74,8 @@ restart_cluster() {
   sleep $SLEEP_CLUSTER_SHUTDOWN
   kill -SIGINT $CLUSTER_PID
 
-  wait $CLUSTER_PID
-
   echo "Starting the cluster..."
-  $START_CLUSTER_CMD "$config_file" "$cloud_config_file" | tee "$log_file" &
+  $START_CLUSTER_CMD "$config_file" "$cloud_config_file" "true" | tee "$log_file" &
   CLUSTER_PID=$!
   echo "Cluster PID: $CLUSTER_PID"
 
@@ -101,14 +99,15 @@ load_data() {
 # ================================
 
 # Check if enough arguments are provided
-if [ "$#" -lt 3 ]; then
-  echo "Usage: $0 <config_file> <output_directory> <serializable_reads (true/false)>"
+if [ "$#" -lt 4 ]; then
+  echo "Usage: $0 <config_file> <ip_file> <output_directory> <serializable_reads (true/false)>"
   exit 1
 fi
 
 CONFIG_FILE="$1"
-OUTPUT_DIR="$2"
-SERIALIZABLE_READS="$3"
+IP_FILE="$2"
+OUTPUT_DIR="$3"
+SERIALIZABLE_READS="$4"
 
 # Validate serializable_reads flag
 if [ "$SERIALIZABLE_READS" != "true" ] && [ "$SERIALIZABLE_READS" != "false" ]; then
@@ -124,7 +123,7 @@ echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-YCSB_RUN_CMD="run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
+YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
@@ -155,7 +154,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
     WORKLOAD_CMD="$GO_YCSB_CMD $YCSB_RUN_CMD ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS"
 
     # Restart cluster for clean test environment
-    restart_cluster "$CONFIG_FILE" "example_cloud_bench_config.txt" "$CLUSTER_LOG_FILE"
+    restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE"
 
     # Load data before running the workload
     load_data "$VERSION_OUTPUT_DIR/load.log"
@@ -172,10 +171,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
 
   # Shutdown cluster after all workloads are completed
   echo "Benchmarking completed for $VERSION. Shutting down cluster..."
-  kill -SIGINT $CLUSTER_PID
-  sleep $SLEEP_CLUSTER_STOP
-  kill -SIGINT $CLUSTER_PID
-  wait $CLUSTER_PID
+  STOP_CLUSTER_CMD "$IP_FILE"
 done
 
 echo "All benchmarking completed for all versions."

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Check if the configuration file is passed as an argument
-if [ $# -lt 1 ]; then
+if [ $# -lt 2 ]; then
   echo "Usage: $0 <config_file> <ip_file>"
   exit 1
 fi
@@ -124,17 +124,6 @@ for branch in "${branches[@]}"; do
 
     echo "Starting etcd on all VMs..."
     start_nodes
-
-    echo "Press Enter to stop VMs..."
-    read
-
-    echo "Are you sure? Press Enter again to confirm..."
-    read
-
-    # Stop etcd on each instance after the benchmark run
-    echo "Stopping etcd on all VMs..."
-    stop_nodes
-
 done
 
 
