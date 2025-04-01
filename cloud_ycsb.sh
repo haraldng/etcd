@@ -19,23 +19,10 @@ ETCD_ENDPOINTS="10.128.15.210:2379,10.128.15.211:2379,10.128.15.212:2379"
 # Commands
 # ================================
 
+GO_YCSB_CMD="./../go_ycsb"
 # Define the path to the start and stop cluster script
 START_CLUSTER_CMD="./start_cloud_nodes.sh"
-
-# ================================
-# Go-YCSB Command Definitions
-# ================================
-
-# Define Go-YCSB commands for different workloads
-WRITE_CMD="./go-ycsb run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
-
-WORKLOAD_A_CMD="./go-ycsb run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p readproportion=0.5 -p updateproportion=0.5 -p threadcount=16 -p target=15000"
-
-WORKLOAD_B_CMD="./go-ycsb run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p readproportion=0.95 -p updateproportion=0.05 -p threadcount=16 -p target=15000"
-
-WORKLOAD_C_CMD="./go-ycsb run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p readproportion=1.0 -p updateproportion=0.0 -p threadcount=16 -p target=15000"
-
-WORKLOAD_D_CMD="./go-ycsb run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p readproportion=0.95 -p insertproportion=0.05 -p threadcount=16 -p target=15000"
+STOP_CLUSTER_CMD="stop_cluster.sh"
 
 # ================================
 # Etcd Versions and Configs
@@ -61,12 +48,11 @@ run_benchmark() {
 # Function to restart the cluster
 restart_cluster() {
   echo "Shutting down the cluster..."
-  # Send enter key twice to stop the cluster
   kill -SIGINT $CLUSTER_PID
   sleep $SLEEP_CLUSTER_SHUTDOWN
   kill -SIGINT $CLUSTER_PID
 
-  # Optional: Wait for cluster to fully shut down
+  # Wait for cluster to fully shut down
   wait $CLUSTER_PID
 
   echo "Starting the cluster..."
@@ -103,14 +89,16 @@ echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 # Create the output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# List of all workloads
-WORKLOADS=(
-  "$WRITE_CMD"
-  "$WORKLOAD_A_CMD"
-  "$WORKLOAD_B_CMD"
-  "$WORKLOAD_C_CMD"
-  "$WORKLOAD_D_CMD"
+# List of workloads (commands will be constructed dynamically)
+WORKLOAD_BASE_CMDS=(
+  "run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
+  "-p readproportion=0.5 -p updateproportion=0.5"   # Workload A
+  "-p readproportion=0.95 -p updateproportion=0.05" # Workload B
+  "-p readproportion=1.0 -p updateproportion=0.0"   # Workload C
+  "-p readproportion=0.95 -p insertproportion=0.05" # Workload D
 )
+
+WORKLOAD_NAMES=("write" "workload-a" "workload-b" "workload-c" "workload-d")
 
 # Loop through each etcd version and benchmark
 for i in ${!ETCD_VERSIONS[@]}; do
@@ -132,18 +120,19 @@ for i in ${!ETCD_VERSIONS[@]}; do
   sleep $SLEEP_CLUSTER_START
 
   # Outer loop: Iterate through all the workloads
-  for WORKLOAD_CMD in "${WORKLOADS[@]}"; do
+  for j in ${!WORKLOAD_BASE_CMDS[@]}; do
+    WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
+    WORKLOAD_CMD="$GO_YCSB_CMD ${WORKLOAD_BASE_CMDS[0]} ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS"
+
     # Inner loop: Run each workload NUM_ITERATIONS times
-    for i in $(seq 1 $NUM_ITERATIONS); do
-      echo "Running workload: $WORKLOAD_CMD (Iteration $i)..."
-      # Define the output file based on the workload
-      WORKLOAD_NAME=$(echo $WORKLOAD_CMD | awk '{print $6}')
+    for k in $(seq 1 $NUM_ITERATIONS); do
+      echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
       OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
       run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE"
     done
 
     # After completing all iterations for the current workload, restart the cluster
-    echo "Completed all iterations for workload $WORKLOAD_CMD. Restarting the cluster..."
+    echo "Completed all iterations for workload $WORKLOAD_NAME. Restarting the cluster..."
     restart_cluster $CONFIG_FILE example_cloud_bench_config.txt  # Restart the cluster after the current workload
 
   done
