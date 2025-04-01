@@ -28,7 +28,7 @@ STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 # ================================
 
 ETCD_VERSIONS=("etcd" "metronome")
-BENCH_IP_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
+BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
 YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 
