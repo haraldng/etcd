@@ -25,3 +25,5 @@ for ip in "${IP_ADDRESSES[@]}"; do
     sleep 1
     ssh "$USERNAME@$ip" "sudo rm -rf $ITERATION_DATA_DIR || { echo 'WARNING: Failed to remove some files in $ITERATION_DATA_DIR on VM $ip'; }"
 done
+
+echo "Stopped etcd on all VMs and removed data directories."

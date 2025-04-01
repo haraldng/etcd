@@ -74,7 +74,7 @@ run_benchmark() {
 
   # Run the workload command normally and pipe the output directly to awk
   # Save the result of awk's pattern match directly to the output file
-  $workload_command 2>&1 | awk '/Run finished, takes/{flag=1} flag' > "$output_file"
+  $workload_command | awk '/Run finished, takes/{flag=1} flag' > "$output_file"
 }
 
 # Function to restart the cluster
@@ -83,15 +83,9 @@ restart_cluster() {
   local ip_file="$2"
   local log_file="$3"
 
-  echo "Shutting down the cluster..."
-  kill -SIGINT $CLUSTER_PID
-  sleep $SLEEP_CLUSTER_SHUTDOWN
-  kill -SIGINT $CLUSTER_PID
-
+  $STOP_CLUSTER_CMD $ip_file
   echo "Starting the cluster..."
   $START_CLUSTER_CMD "$config_file" "$ip_file" "true" > "$log_file"
-  CLUSTER_PID=$!
-  echo "Cluster PID: $CLUSTER_PID"
 
   sleep $SLEEP_CLUSTER_START
 }
