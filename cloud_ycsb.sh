@@ -28,7 +28,7 @@ STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 # ================================
 
 ETCD_VERSIONS=("etcd" "metronome")
-BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
+BENCH_IP_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
 YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 
@@ -79,7 +79,7 @@ run_benchmark() {
 # Function to restart the cluster
 restart_cluster() {
   local config_file="$1"
-  local cloud_config_file="$2"
+  local ip_file="$2"
   local log_file="$3"
 
   echo "Shutting down the cluster..."
@@ -88,7 +88,7 @@ restart_cluster() {
   kill -SIGINT $CLUSTER_PID
 
   echo "Starting the cluster..."
-  $START_CLUSTER_CMD "$config_file" "$cloud_config_file" "true" | tee "$log_file" &
+  $START_CLUSTER_CMD "$config_file" "$ip_file" "true" | tee "$log_file" &
   CLUSTER_PID=$!
   echo "Cluster PID: $CLUSTER_PID"
 
@@ -112,15 +112,14 @@ load_data() {
 # ================================
 
 # Check if enough arguments are provided
-if [ "$#" -lt 4 ]; then
-  echo "Usage: $0 <config_file> <ip_file> <output_directory> <serializable_reads (true/false)>"
+if [ "$#" -lt 3 ]; then
+  echo "Usage: $0 <ip_file> <output_directory> <serializable_reads (true/false)>"
   exit 1
 fi
 
-CONFIG_FILE="$1"
-IP_FILE="$2"
-OUTPUT_DIR="$3"
-SERIALIZABLE_READS="$4"
+IP_FILE="$1"
+OUTPUT_DIR="$2"
+SERIALIZABLE_READS="$3"
 
 # Validate serializable_reads flag
 if [ "$SERIALIZABLE_READS" != "true" ] && [ "$SERIALIZABLE_READS" != "false" ]; then
@@ -129,7 +128,7 @@ if [ "$SERIALIZABLE_READS" != "true" ] && [ "$SERIALIZABLE_READS" != "false" ]; 
 fi
 
 # Parse etcd endpoints from the provided config file
-parse_config "$CONFIG_FILE"
+parse_config "$IP_FILE"
 
 echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 
