@@ -47,6 +47,10 @@ run_benchmark() {
 
 # Function to restart the cluster
 restart_cluster() {
+  local config_file="$1"
+  local cloud_config_file="$2"
+  local log_file="$3"
+
   echo "Shutting down the cluster..."
   kill -SIGINT $CLUSTER_PID
   sleep $SLEEP_CLUSTER_SHUTDOWN
@@ -56,7 +60,7 @@ restart_cluster() {
   wait $CLUSTER_PID
 
   echo "Starting the cluster..."
-  $START_CLUSTER_CMD $1 $2 &
+  $START_CLUSTER_CMD "$config_file" "$cloud_config_file" > "$log_file" 2>&1 &
   CLUSTER_PID=$!
 
   # Wait for a few seconds to ensure the cluster is up and running
@@ -108,12 +112,13 @@ for i in ${!ETCD_VERSIONS[@]}; do
   # Create an output directory for the current version
   VERSION_OUTPUT_DIR="$OUTPUT_DIR/$VERSION"
   mkdir -p "$VERSION_OUTPUT_DIR"  # Create the version-specific folder
+  CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
 
   echo "Benchmarking version: $VERSION using config: $CONFIG_FILE"
 
-  # Start the cluster in the background
-  echo "Starting the cluster for $VERSION..."
-  $START_CLUSTER_CMD $CONFIG_FILE example_cloud_bench_config.txt &
+  # Start the cluster in the background with logging
+  echo "Starting the cluster for $VERSION (logging to $CLUSTER_LOG_FILE)..."
+  $START_CLUSTER_CMD "$CONFIG_FILE" example_cloud_bench_config.txt > "$CLUSTER_LOG_FILE" 2>&1 &
   CLUSTER_PID=$!
 
   # Wait for a few seconds to ensure the cluster is up and running
@@ -133,7 +138,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
 
     # After completing all iterations for the current workload, restart the cluster
     echo "Completed all iterations for workload $WORKLOAD_NAME. Restarting the cluster..."
-    restart_cluster $CONFIG_FILE example_cloud_bench_config.txt  # Restart the cluster after the current workload
+    restart_cluster "$CONFIG_FILE" "example_cloud_bench_config.txt" "$CLUSTER_LOG_FILE"  # Restart the cluster after the current workload
 
   done
 
