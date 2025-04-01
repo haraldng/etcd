@@ -5,22 +5,21 @@
 # ================================
 
 # Sleep times in seconds
-SLEEP_CLUSTER_START=2       # Time to wait (in seconds) for the cluster to start
-SLEEP_CLUSTER_SHUTDOWN=0.1  # Time to wait (in seconds) between shutdown signals
-SLEEP_CLUSTER_STOP=0.1      # Time to wait (in seconds) after sending shutdown signal
+SLEEP_CLUSTER_START=2
+SLEEP_CLUSTER_SHUTDOWN=0.1
+SLEEP_CLUSTER_STOP=0.1
 
 # Number of iterations for each workload
 NUM_ITERATIONS=3
 
-# Etcd endpoints
-ETCD_ENDPOINTS="10.128.15.210:2379,10.128.15.211:2379,10.128.15.212:2379"
+# Default etcd endpoints (Overwritten by config file)
+ETCD_ENDPOINTS=""
 
 # ================================
 # Commands
 # ================================
 
 GO_YCSB_CMD="./../go-ycsb"
-# Define the path to the start and stop cluster script
 START_CLUSTER_CMD="./start_cloud_nodes.sh"
 STOP_CLUSTER_CMD="stop_cluster.sh"
 
@@ -28,7 +27,6 @@ STOP_CLUSTER_CMD="stop_cluster.sh"
 # Etcd Versions and Configs
 # ================================
 
-# List of etcd versions with their respective bench_config.json files
 ETCD_VERSIONS=("metronome" "etcd")
 BENCH_CONFIG_FILES=("metronome_bench_config.json" "etcd_bench_config.json")
 
@@ -36,12 +34,32 @@ BENCH_CONFIG_FILES=("metronome_bench_config.json" "etcd_bench_config.json")
 # Functions
 # ================================
 
-# Function to run the benchmark for a specific workload and capture the output from "Run finished, takes"
+# Parse etcd endpoints from config file
+parse_config() {
+  local config_file="$1"
+
+  if [ ! -f "$config_file" ]; then
+    echo "ERROR: Config file '$config_file' not found!"
+    exit 1
+  fi
+
+  # Read the file, skip the first line, append :2379 to each IP, and join with commas
+  ETCD_ENDPOINTS=$(tail -n +2 "$config_file" | awk '{print $1":2379"}' | paste -sd "," -)
+
+  if [ -z "$ETCD_ENDPOINTS" ]; then
+    echo "ERROR: No valid etcd endpoints found in '$config_file'!"
+    exit 1
+  fi
+
+  echo "Parsed etcd endpoints: $ETCD_ENDPOINTS"
+}
+
+# Function to run the benchmark
 run_benchmark() {
   local workload_command="$1"
   local output_file="$2"
 
-  # Print all output in real time, but only capture the relevant part in the output file
+  # Run workload and save only the final part of the output
   $workload_command | tee >(awk '/Run finished, takes/{flag=1} flag' >> "$output_file")
 }
 
@@ -56,24 +74,22 @@ restart_cluster() {
   sleep $SLEEP_CLUSTER_SHUTDOWN
   kill -SIGINT $CLUSTER_PID
 
-  # Wait for cluster to fully shut down
   wait $CLUSTER_PID
 
   echo "Starting the cluster..."
   $START_CLUSTER_CMD "$config_file" "$cloud_config_file" | tee "$log_file" &
   CLUSTER_PID=$!
-  echo "Cluster pid: $CLUSTER_PID"
+  echo "Cluster PID: $CLUSTER_PID"
 
-  # Wait for a few seconds to ensure the cluster is up and running
   sleep $SLEEP_CLUSTER_START
 }
 
-# Function to load initial data before running a workload
+# Function to load initial data into etcd
 load_data() {
   local log_file="$1"
 
   echo "Loading initial data into etcd..."
-  $GO_YCSB_CMD load etcd -p etcd.endpoints="10.128.15.210:2379" \
+  $GO_YCSB_CMD load etcd -p etcd.endpoints="$ETCD_ENDPOINTS" \
     -p recordcount=20000 \
     -p insertcount=20000 \
     -p fieldcount=10 \
@@ -84,31 +100,35 @@ load_data() {
 # Main Script Logic
 # ================================
 
-# Check if an output directory argument was provided
-if [ -z "$1" ]; then
-  echo "Usage: $0 <output_directory> <serializable_reads (true/false)>"
+# Check if enough arguments are provided
+if [ "$#" -lt 3 ]; then
+  echo "Usage: $0 <config_file> <output_directory> <serializable_reads (true/false)>"
   exit 1
 fi
 
-# Assign the input argument to the OUTPUT_DIR variable
-OUTPUT_DIR="$1"
+CONFIG_FILE="$1"
+OUTPUT_DIR="$2"
+SERIALIZABLE_READS="$3"
 
-# Check if the serializable_reads flag is provided and if it is "true" or "false"
-SERIALIZABLE_READS=$2
-
+# Validate serializable_reads flag
 if [ "$SERIALIZABLE_READS" != "true" ] && [ "$SERIALIZABLE_READS" != "false" ]; then
   echo "Error: Please provide 'true' or 'false' for the serializable_reads flag."
   exit 1
 fi
 
+# Parse etcd endpoints from the provided config file
+parse_config "$CONFIG_FILE"
+
 echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 
-# Create the output directory if it doesn't exist
+# Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# List of workloads (commands will be constructed dynamically)
+YCSB_RUN_CMD="run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
+
+# Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
-  "run etcd -p etcd.endpoints=\"$ETCD_ENDPOINTS\" -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
+  "-p readproportion=0.0 -p updateproportion=1.0"
   "-p readproportion=0.5 -p updateproportion=0.5"   # Workload A
   "-p readproportion=0.95 -p updateproportion=0.05" # Workload B
   "-p readproportion=1.0 -p updateproportion=0.0"   # Workload C
@@ -117,41 +137,41 @@ WORKLOAD_BASE_CMDS=(
 
 WORKLOAD_NAMES=("write" "workload-a" "workload-b" "workload-c" "workload-d")
 
-# Loop through each etcd version and benchmark
+# Loop through each etcd version
 for i in ${!ETCD_VERSIONS[@]}; do
   VERSION=${ETCD_VERSIONS[$i]}
   CONFIG_FILE=${BENCH_CONFIG_FILES[$i]}
 
-  # Create an output directory for the current version
+  # Create version-specific output directory
   VERSION_OUTPUT_DIR="$OUTPUT_DIR/$VERSION"
-  mkdir -p "$VERSION_OUTPUT_DIR"  # Create the version-specific folder
+  mkdir -p "$VERSION_OUTPUT_DIR"
   CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
 
   echo "Benchmarking version: $VERSION using config: $CONFIG_FILE"
 
-  # Outer loop: Iterate through all the workloads
+  # Iterate through all workloads
   for j in ${!WORKLOAD_BASE_CMDS[@]}; do
     WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
-    WORKLOAD_CMD="$GO_YCSB_CMD ${WORKLOAD_BASE_CMDS[0]} ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS"
+    WORKLOAD_CMD="$GO_YCSB_CMD $YCSB_RUN_CMD ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS"
 
-    # Restart the cluster after the workload completes
+    # Restart cluster for clean test environment
     restart_cluster "$CONFIG_FILE" "example_cloud_bench_config.txt" "$CLUSTER_LOG_FILE"
 
-    # Load data into etcd before running workloads
+    # Load data before running the workload
     load_data "$VERSION_OUTPUT_DIR/load.log"
 
-    # Inner loop: Run each workload NUM_ITERATIONS times
+    # Run workload multiple times
     for k in $(seq 1 $NUM_ITERATIONS); do
       echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
       OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
       run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE"
     done
-    echo "Completed all iterations for workload $WORKLOAD_NAME."
+
+    echo "Completed all iterations for workload: $WORKLOAD_NAME."
   done
 
-  # After completing all workloads for the current version, shutdown the cluster
-  echo "Benchmarking completed for $VERSION."
-  echo "Shutting down the cluster for $VERSION..."
+  # Shutdown cluster after all workloads are completed
+  echo "Benchmarking completed for $VERSION. Shutting down cluster..."
   kill -SIGINT $CLUSTER_PID
   sleep $SLEEP_CLUSTER_STOP
   kill -SIGINT $CLUSTER_PID
