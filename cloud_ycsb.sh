@@ -62,6 +62,7 @@ restart_cluster() {
   echo "Starting the cluster..."
   $START_CLUSTER_CMD "$config_file" "$cloud_config_file" > "$log_file" 2>&1 &
   CLUSTER_PID=$!
+  echo "Cluster pid: $CLUSTER_PID"
 
   # Wait for a few seconds to ensure the cluster is up and running
   sleep $SLEEP_CLUSTER_START
@@ -120,6 +121,8 @@ for i in ${!ETCD_VERSIONS[@]}; do
   echo "Starting the cluster for $VERSION (logging to $CLUSTER_LOG_FILE)..."
   $START_CLUSTER_CMD "$CONFIG_FILE" example_cloud_bench_config.txt > "$CLUSTER_LOG_FILE" 2>&1 &
   CLUSTER_PID=$!
+
+  echo "Cluster pid: $CLUSTER_PID"
 
   # Wait for a few seconds to ensure the cluster is up and running
   sleep $SLEEP_CLUSTER_START
