@@ -152,7 +152,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
 
     # Load data before running the workload
     echo "Loading initial data into etcd: $LOAD_CMD"
-    $LOAD_CMD | tee -a "$log_file"
+    $LOAD_CMD | tee -a "$VERSION_OUTPUT_DIR/load.log"
 
     # Run workload multiple times
     for k in $(seq 1 $NUM_ITERATIONS); do
