@@ -30,7 +30,7 @@ ETCD_VERSIONS=("etcd" "metronome")
 BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
 GO_YCSB_CMD="./../go-ycsb"
-YCSB_LOAD_CMD="$GO_YCSB_CMD load etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p insertcount=20000 -p fieldcount=10 -p fieldlength=1024"
+YCSB_LOAD_CMD="load etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p insertcount=20000 -p fieldcount=10 -p fieldlength=1024"
 YCSB_RUN_CMD="run etcd -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
@@ -167,7 +167,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
 
   # Shutdown cluster after all workloads are completed
   echo "Benchmarking completed for $VERSION. Shutting down cluster..."
-  STOP_CLUSTER_CMD "$IP_FILE"
+  $STOP_CLUSTER_CMD "$IP_FILE"
 done
 
 echo "All benchmarking completed for all versions."
