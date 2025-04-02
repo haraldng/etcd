@@ -19,7 +19,6 @@ ETCD_ENDPOINTS=""
 # Commands
 # ================================
 
-GO_YCSB_CMD="./../go-ycsb"
 START_CLUSTER_CMD="./start_cloud_nodes.sh"
 STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 
@@ -30,7 +29,9 @@ STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 ETCD_VERSIONS=("etcd" "metronome")
 BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
-
+GO_YCSB_CMD="./../go-ycsb"
+YCSB_LOAD_CMD="$GO_YCSB_CMD load etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p insertcount=20000 -p fieldcount=10 -p fieldlength=1024"
+YCSB_RUN_CMD="run etcd -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
   "-p readproportion=0.0 -p updateproportion=1.0"   # Write
@@ -94,11 +95,7 @@ load_data() {
   local log_file="$1"
 
   echo "Loading initial data into etcd..."
-  $GO_YCSB_CMD load etcd -p etcd.endpoints="$ETCD_ENDPOINTS" \
-    -p recordcount=20000 \
-    -p insertcount=20000 \
-    -p fieldcount=10 \
-    -p fieldlength=1024 | tee -a "$log_file"
+  $GO_YCSB_CMD $YCSB_LOAD_CMD | tee -a "$log_file"
 }
 
 # ================================
@@ -129,7 +126,6 @@ fi
 
 # Parse etcd endpoints from the provided config file
 parse_config "$IP_FILE"
-YCSB_RUN_CMD="run etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 
 echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 
@@ -151,7 +147,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
   # Iterate through all workloads
   for j in ${!WORKLOAD_BASE_CMDS[@]}; do
     WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
-    WORKLOAD_CMD="$GO_YCSB_CMD $YCSB_RUN_CMD ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS"
+    WORKLOAD_CMD="$GO_YCSB_CMD $YCSB_RUN_CMD ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS -p etcd.endpoints=$ETCD_ENDPOINTS"
 
     # Restart cluster for clean test environment
     restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE"
