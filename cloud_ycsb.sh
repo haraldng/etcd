@@ -33,14 +33,14 @@ BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
-  "-p readproportion=1.0 -p updateproportion=0.0"   # Workload C
-  "-p readproportion=0.0 -p updateproportion=1.0"
+  "-p readproportion=0.0 -p updateproportion=1.0"   # Write
   "-p readproportion=0.5 -p updateproportion=0.5"   # Workload A
   "-p readproportion=0.95 -p updateproportion=0.05" # Workload B
+  "-p readproportion=1.0 -p updateproportion=0.0"   # Workload C
   "-p readproportion=0.95 -p insertproportion=0.05" # Workload D
 )
 
-WORKLOAD_NAMES=("workload-c" "write" "workload-a" "workload-b" "workload-d")
+WORKLOAD_NAMES=("write" "workload-a" "workload-b" "workload-c" "workload-d")
 
 # ================================
 # Functions
@@ -73,7 +73,7 @@ run_benchmark() {
 
   # Run the workload command normally and pipe the output directly to awk
   # Save the result of awk's pattern match directly to the output file
-  $workload_command | awk '/Run finished, takes/{flag=1} flag' >> "$output_file"
+  eval "$workload_command" 2>&1 | tee >(awk '/Run finished, takes/{flag=1} flag' >> "$output_file")
 }
 
 # Function to restart the cluster
