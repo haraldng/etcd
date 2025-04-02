@@ -41,7 +41,13 @@ WORKLOAD_BASE_CMDS=(
   "-p readproportion=0.95 -p insertproportion=0.05" # Workload D
 )
 
-WORKLOAD_NAMES=("write" "workload-a" "workload-b" "workload-c" "workload-d")
+WORKLOAD_NAMES=(
+  "write"
+  "workload-a"
+  "workload-b"
+  "workload-c"
+  "workload-d"
+ )
 
 # ================================
 # Functions
