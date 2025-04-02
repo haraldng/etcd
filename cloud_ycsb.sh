@@ -96,15 +96,6 @@ restart_cluster() {
   sleep $SLEEP_CLUSTER_START
 }
 
-# Function to load initial data into etcd
-load_data() {
-  local load_cmd="$1"
-  local log_file="$2"
-
-  echo "Loading initial data into etcd..."
-  $load_cmd | tee -a "$log_file"
-}
-
 # ================================
 # Main Script Logic
 # ================================
@@ -160,7 +151,8 @@ for i in ${!ETCD_VERSIONS[@]}; do
     restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE"
 
     # Load data before running the workload
-    load_data $LOAD_CMD "$VERSION_OUTPUT_DIR/load.log"
+    echo "Loading initial data into etcd: $LOAD_CMD"
+    $LOAD_CMD | tee -a "$log_file"
 
     # Run workload multiple times
     for k in $(seq 1 $NUM_ITERATIONS); do
