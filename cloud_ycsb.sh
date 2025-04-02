@@ -159,6 +159,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
       echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
       OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
       run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE"
+      sleep 30
     done
 
     echo "Completed all iterations for workload: $WORKLOAD_NAME."
