@@ -30,7 +30,7 @@ ETCD_VERSIONS=("etcd" "metronome")
 BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
 
 GO_YCSB_CMD="./../go-ycsb"
-YCSB_LOAD_CMD="load etcd -p etcd.endpoints=$ETCD_ENDPOINTS -p recordcount=20000 -p insertcount=20000 -p fieldcount=10 -p fieldlength=1024"
+YCSB_LOAD_CMD="load etcd -p recordcount=20000 -p insertcount=20000 -p fieldcount=10 -p fieldlength=1024"
 YCSB_RUN_CMD="run etcd -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
@@ -92,10 +92,11 @@ restart_cluster() {
 
 # Function to load initial data into etcd
 load_data() {
-  local log_file="$1"
+  local load_cmd="$1"
+  local log_file="$2"
 
   echo "Loading initial data into etcd..."
-  $GO_YCSB_CMD $YCSB_LOAD_CMD | tee -a "$log_file"
+  $load_cmd | tee -a "$log_file"
 }
 
 # ================================
@@ -132,6 +133,7 @@ echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
+LOAD_CMD="$GO_YCSB_CMD $YCSB_LOAD_CMD -p etcd.endpoints=$ETCD_ENDPOINTS"
 # Loop through each etcd version
 for i in ${!ETCD_VERSIONS[@]}; do
   VERSION=${ETCD_VERSIONS[$i]}
@@ -143,7 +145,6 @@ for i in ${!ETCD_VERSIONS[@]}; do
   CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
 
   echo "Benchmarking version: $VERSION using config: $CONFIG_FILE"
-
   # Iterate through all workloads
   for j in ${!WORKLOAD_BASE_CMDS[@]}; do
     WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
@@ -153,7 +154,7 @@ for i in ${!ETCD_VERSIONS[@]}; do
     restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE"
 
     # Load data before running the workload
-    load_data "$VERSION_OUTPUT_DIR/load.log"
+    load_data $LOAD_CMD "$VERSION_OUTPUT_DIR/load.log"
 
     # Run workload multiple times
     for k in $(seq 1 $NUM_ITERATIONS); do
