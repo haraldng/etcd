@@ -26,12 +26,18 @@ STOP_CLUSTER_CMD="./stop_cloud_nodes.sh"
 # Etcd Versions and Configs
 # ================================
 
-ETCD_VERSIONS=("etcd" "metronome")
-BENCH_CONFIG_FILES=("etcd_bench_config.json" "metronome_bench_config.json")
+ETCD_VERSIONS=(
+  "etcd"
+  "metronome"
+)
+BENCH_CONFIG_FILES=(
+  "etcd_bench_config.json"
+  "metronome_bench_config.json"
+)
 
 GO_YCSB_CMD="./../go-ycsb"
-YCSB_LOAD_CMD="load etcd -p recordcount=20000 -p insertcount=20000 -p fieldcount=10 -p fieldlength=1024"
-YCSB_RUN_CMD="run etcd -p recordcount=20000 -p operationcount=500000 -p fieldcount=10 -p fieldlength=1024 -p threadcount=16 -p target=15000"
+YCSB_LOAD_CMD="load etcd -p recordcount=20000 -p insertcount=20000"
+YCSB_RUN_CMD="run etcd -p recordcount=20000 -p operationcount=500000 -p threadcount=16"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
   "-p readproportion=0.0 -p updateproportion=1.0"   # Write
@@ -77,10 +83,12 @@ parse_config() {
 run_benchmark() {
   local workload_command="$1"
   local output_file="$2"
+  local log_file="$3"
 
   # Run the workload command normally and pipe the output directly to awk
   # Save the result of awk's pattern match directly to the output file
-  eval "$workload_command" 2>&1 | tee >(awk '/Run finished, takes/{flag=1} flag' >> "$output_file")
+#  eval "$workload_command" 2>&1 | tee >(awk '/Run finished, takes/{flag=1} flag' >> "$output_file") | tee -a "$log_file"
+  eval "$workload_command" 2>&1 | tee "$log_file" | awk '/Run finished, takes/{flag=1} flag' >> "$output_file"
 }
 
 # Function to restart the cluster
@@ -153,12 +161,16 @@ for i in ${!ETCD_VERSIONS[@]}; do
     # Load data before running the workload
     echo "Loading initial data into etcd: $LOAD_CMD"
     $LOAD_CMD | tee -a "$VERSION_OUTPUT_DIR/load.log"
+    echo "Load completed. Sleeping for 10 seconds..."
+    sleep 10
 
     # Run workload multiple times
     for k in $(seq 1 $NUM_ITERATIONS); do
       echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
       OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
-      run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE"
+      RUN_LOG_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME-${k}.log"
+      run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE" "$RUN_LOG_FILE"
+      echo "Workload $WORKLOAD_NAME completed. Sleeping for 30 seconds before next iteration..."
       sleep 30
     done
 
