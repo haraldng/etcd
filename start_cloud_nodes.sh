@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # Check if the configuration file is passed as an argument
-if [ $# -lt 2 ]; then
-  echo "Usage: $0 <config_file> <ip_file>"
+if [ $# -lt 3 ]; then
+  echo "Usage: $0 <config_file> <ip_file> <skip_build>"
   exit 1
 fi
 
 config_file=$1
 ip_file=$2
+skip_build=$3
 
 # Validate if the configuration file exists
 if ! [ -f "$config_file" ]; then
@@ -107,15 +108,13 @@ for ip in "${IP_ADDRESSES[@]}"; do
 done
 
 for branch in "${branches[@]}"; do
-    echo "Checking out branch $branch and rebuilding on each VM..."
-    for ip in "${IP_ADDRESSES[@]}"; do
-        ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
-    done
+    if ! [ "$skip_build" == "true" ]; then
+        echo "Building etcd on all VMs for branch $branch..."
+        for ip in "${IP_ADDRESSES[@]}"; do
+            ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
+        done
+    fi
 
-    echo "Checking out branch $branch and rebuilding on each VM..."
-    for ip in "${IP_ADDRESSES[@]}"; do
-        ssh "$USERNAME@$ip" "cd etcd && git checkout $branch && git pull && make build" || { echo "ERROR: Failed to build etcd on VM $ip"; exit 1; }
-    done
     echo "Stopping etcd processes and cleaning data directory on all VMs..."
     for ip in "${IP_ADDRESSES[@]}"; do
         ssh "$USERNAME@$ip" "killall etcd || true" || { echo "ERROR: Failed to stop etcd on VM $ip"; exit 1; }

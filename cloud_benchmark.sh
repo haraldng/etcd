@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Check if the configuration file is passed as an argument
-if [ $# -lt 1 ]; then
+if [ $# -lt 2 ]; then
   echo "Usage: $0 <config_file> <ip_file>"
   exit 1
 fi

@@ -67,3 +67,5 @@ else
 fi
 
 echo "All steps completed successfully!"
+df -h
+echo "If the size is incorrect, resize it with: sudo resize2fs $DEVICE_NAME"

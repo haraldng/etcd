@@ -34,10 +34,21 @@ BENCH_CONFIG_FILES=(
   "etcd_bench_config.json"
   "metronome_bench_config.json"
 )
+FIELDLENGTHS=(
+  "100"
+  "1000"
+  "1600"
+  "3200"
+)
+FIELDCOUNT=10
+THREAD_COUNT=1024
+OPERATION_COUNT=2000000
+INSERT_COUNT=20000
+RECORD_COUNT=20000
 
 GO_YCSB_CMD="./../go-ycsb"
-YCSB_LOAD_CMD="load etcd -p recordcount=20000 -p insertcount=20000"
-YCSB_RUN_CMD="run etcd -p recordcount=20000 -p operationcount=500000 -p threadcount=16"
+YCSB_LOAD_CMD="load etcd -p recordcount=$RECORD_COUNT -p insertcount=$OPERATION_COUNT"
+YCSB_RUN_CMD="run etcd -p recordcount=$RECORD_COUNT -p operationcount=$OPERATION_COUNT -p threadcount=$THREAD_COUNT"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
   "-p readproportion=0.0 -p updateproportion=1.0"   # Write
@@ -96,10 +107,11 @@ restart_cluster() {
   local config_file="$1"
   local ip_file="$2"
   local log_file="$3"
+  local skip_build="$4"
 
   $STOP_CLUSTER_CMD $ip_file
   echo "Starting the cluster..."
-  $START_CLUSTER_CMD "$config_file" "$ip_file" "true" > "$log_file"
+  $START_CLUSTER_CMD "$config_file" "$ip_file" "$skip_build" > "$log_file"
 
   sleep $SLEEP_CLUSTER_START
 }
@@ -139,47 +151,59 @@ echo "Serializable reads flag set to: $SERIALIZABLE_READS"
 mkdir -p "$OUTPUT_DIR"
 
 LOAD_CMD="$GO_YCSB_CMD $YCSB_LOAD_CMD -p etcd.endpoints=$ETCD_ENDPOINTS"
-# Loop through each etcd version
-for i in ${!ETCD_VERSIONS[@]}; do
-  VERSION=${ETCD_VERSIONS[$i]}
-  CONFIG_FILE=${BENCH_CONFIG_FILES[$i]}
 
-  # Create version-specific output directory
-  VERSION_OUTPUT_DIR="$OUTPUT_DIR/$VERSION"
-  mkdir -p "$VERSION_OUTPUT_DIR"
-  CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
+for fieldlength in "${FIELDLENGTHS[@]}"; do
+  LOAD_CMD+=" -p fieldlength=$fieldlength -p fieldcount=$FIELDCOUNT"
+  for i in ${!ETCD_VERSIONS[@]}; do
+    VERSION=${ETCD_VERSIONS[$i]}
+    CONFIG_FILE=${BENCH_CONFIG_FILES[$i]}
 
-  echo "Benchmarking version: $VERSION using config: $CONFIG_FILE"
-  # Iterate through all workloads
-  for j in ${!WORKLOAD_BASE_CMDS[@]}; do
-    WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
-    WORKLOAD_CMD="$GO_YCSB_CMD $YCSB_RUN_CMD ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS -p etcd.endpoints=$ETCD_ENDPOINTS"
+    # Create version-specific output directory
+    VERSION_OUTPUT_DIR="$OUTPUT_DIR/${fieldlength}/$VERSION"
+    mkdir -p "$VERSION_OUTPUT_DIR"
+    CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
 
-    # Restart cluster for clean test environment
-    restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE"
+    echo "Benchmarking version: $VERSION using config: $CONFIG_FILE"
+    # Iterate through all workloads
+    for j in ${!WORKLOAD_BASE_CMDS[@]}; do
+      WORKLOAD_NAME=${WORKLOAD_NAMES[$j]}
+      WORKLOAD_CMD="$GO_YCSB_CMD $YCSB_RUN_CMD ${WORKLOAD_BASE_CMDS[$j]} -p etcd.serializable_reads=$SERIALIZABLE_READS -p etcd.endpoints=$ETCD_ENDPOINTS -p fieldlength=$fieldlength -p fieldcount=$FIELDCOUNT"
 
-    # Load data before running the workload
-    echo "Loading initial data into etcd: $LOAD_CMD"
-    $LOAD_CMD | tee -a "$VERSION_OUTPUT_DIR/load.log"
-    echo "Load completed. Sleeping for 10 seconds..."
-    sleep 10
+      # Run workload multiple times
+      for k in $(seq 1 $NUM_ITERATIONS); do
+        if [ "$k" -gt 1 ]; then
+          SKIP_BUILD="true"
+        else
+          SKIP_BUILD="false"
+        fi
 
-    # Run workload multiple times
-    for k in $(seq 1 $NUM_ITERATIONS); do
-      echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
-      OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
-      RUN_LOG_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME-${k}.log"
-      run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE" "$RUN_LOG_FILE"
-      echo "Workload $WORKLOAD_NAME completed. Sleeping for 30 seconds before next iteration..."
-      sleep 30
+        # Restart cluster for clean test environment
+        restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE" "$SKIP_BUILD"
+
+        # Load data before running the workload
+        echo "Loading initial data into etcd: $LOAD_CMD"
+        $LOAD_CMD | tee -a "$VERSION_OUTPUT_DIR/load.log"
+        echo "Load completed. Sleeping for 10 seconds..."
+        sleep 10
+
+        echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
+        OUTPUT_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME.txt"
+        RUN_LOG_FILE="$VERSION_OUTPUT_DIR/$WORKLOAD_NAME-${k}.log"
+        run_benchmark "$WORKLOAD_CMD" "$OUTPUT_FILE" "$RUN_LOG_FILE"
+        echo "Workload $WORKLOAD_NAME completed. Sleeping for 30 seconds before next iteration..."
+        sleep 30
+      done
+
+      echo "Completed all iterations for workload: $WORKLOAD_NAME."
     done
 
-    echo "Completed all iterations for workload: $WORKLOAD_NAME."
+    # Shutdown cluster after all workloads are completed
+    echo "Benchmarking completed for $VERSION. Shutting down cluster..."
+    $STOP_CLUSTER_CMD "$IP_FILE"
   done
 
-  # Shutdown cluster after all workloads are completed
-  echo "Benchmarking completed for $VERSION. Shutting down cluster..."
-  $STOP_CLUSTER_CMD "$IP_FILE"
 done
+
+# Loop through each etcd version
 
 echo "All benchmarking completed for all versions."
