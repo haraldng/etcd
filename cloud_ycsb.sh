@@ -47,7 +47,7 @@ INSERT_COUNT=20000
 RECORD_COUNT=20000
 
 GO_YCSB_CMD="./../go-ycsb"
-YCSB_LOAD_CMD="load etcd -p recordcount=$RECORD_COUNT -p insertcount=$OPERATION_COUNT"
+YCSB_LOAD_CMD="load etcd -p recordcount=$RECORD_COUNT -p insertcount=$INSERT_COUNT"
 YCSB_RUN_CMD="run etcd -p recordcount=$RECORD_COUNT -p operationcount=$OPERATION_COUNT -p threadcount=$THREAD_COUNT"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
