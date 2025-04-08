@@ -143,7 +143,7 @@ for fieldlength in "${FIELDLENGTHS[@]}"; do
         VERSION_OUTPUT_DIR="$OUTPUT_DIR/${fieldlength}/$VERSION/$WORKLOAD_NAME/$k"
         mkdir -p "$VERSION_OUTPUT_DIR"
         CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
-        WORKLOAD_CMD="$BENCH_CMD --endpoints=$ETCD_ENDPOINTS --val-size=$fieldlength --output-dir $VERSION_OUTPUT_DIR"
+        WORKLOAD_CMD="$BENCH_CMD ${WORKLOAD_BASE_CMDS[$j]} --endpoints=$ETCD_ENDPOINTS --val-size=$fieldlength --output-dir $VERSION_OUTPUT_DIR "
 
         # Restart cluster for clean test environment
         restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE" "$SKIP_BUILD"
