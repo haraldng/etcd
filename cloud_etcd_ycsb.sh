@@ -140,15 +140,15 @@ for fieldlength in "${FIELDLENGTHS[@]}"; do
           SKIP_BUILD="false"
         fi
 
-        # Restart cluster for clean test environment
-        restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE" "$SKIP_BUILD"
-        echo "Cluster restarted. Sleeping for $SLEEP_CLUSTER_START seconds..."
-        sleep $SLEEP_CLUSTER_START
-
         VERSION_OUTPUT_DIR="$OUTPUT_DIR/${fieldlength}/$VERSION/$WORKLOAD_NAME/$k"
         mkdir -p "$VERSION_OUTPUT_DIR"
         CLUSTER_LOG_FILE="$VERSION_OUTPUT_DIR/cluster.log"
         WORKLOAD_CMD="$BENCH_CMD --endpoints=$ETCD_ENDPOINTS --val-size=$fieldlength --output-dir $VERSION_OUTPUT_DIR"
+
+        # Restart cluster for clean test environment
+        restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE" "$SKIP_BUILD"
+        echo "Cluster restarted. Sleeping for $SLEEP_CLUSTER_START seconds..."
+        sleep $SLEEP_CLUSTER_START
 
         echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
         # Run the workload command
