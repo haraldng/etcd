@@ -121,7 +121,7 @@ func mixedFunc(cmd *cobra.Command, _ []string) {
 			}
 			key := string(keyBytes)
 
-			if rand.Intn(100) < mixedReadPercent || mixedReadPercent == 0 {
+			if rand.Intn(100) < mixedReadPercent {
 				requests <- labeledOp{op: v3.OpGet(key), typ: readOp}
 			} else {
 				val := string(mustRandBytes(mixedValSize))
