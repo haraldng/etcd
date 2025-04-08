@@ -121,7 +121,7 @@ func mixedFunc(cmd *cobra.Command, _ []string) {
 			}
 			key := string(keyBytes)
 
-			if rand.Intn(100) < mixedReadPercent {
+			if rand.Intn(100) < mixedReadPercent || mixedReadPercent == 0 {
 				requests <- labeledOp{op: v3.OpGet(key), typ: readOp}
 			} else {
 				val := string(mustRandBytes(mixedValSize))
@@ -212,6 +212,9 @@ func preloadEtcd(totalClients uint, totalConns uint) {
 	} else {
 		fmt.Println("✅ Preload report saved to ", loadFile)
 	}
+
+	fmt.Println("Pre-loading completed. Sleeping for 10 seconds before starting benchmark...")
+	time.Sleep(10 * time.Second)
 }
 
 func writeReportToFile(summary string, filename string) error {

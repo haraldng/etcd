@@ -36,22 +36,24 @@ BENCH_CONFIG_FILES=(
 )
 FIELDLENGTHS=(
   "128"
-  #"1600"
+  "16384"
   "32768"
 )
-FIELDCOUNT=10
 THREAD_COUNT=1024
-OPERATION_COUNT=500000
+OPERATION_COUNT=2000000
+KEYSPACE_SIZE=500000
 
-BENCH_CMD="go run ./tools/benchmark mixed --clients $THREAD_COUNT  --sequential-keys --conns=100 --total $OPERATION_COUNT  --key-space-size $OPERATION_COUNT"
+BENCH_CMD="go run ./tools/benchmark mixed --clients $THREAD_COUNT  --sequential-keys --conns=100 --total $OPERATION_COUNT  --key-space-size $KEYSPACE_SIZE"
 # Define workloads dynamically
 WORKLOAD_BASE_CMDS=(
+  "--read-percent 0"    # Write
   "--read-percent 50"   # Workload A
   "--read-percent 95"   # Workload B
   "--read-percent 100"   # Workload C
 )
 
 WORKLOAD_NAMES=(
+  "write"
   "workload-a"
   "workload-b"
   "workload-c"
@@ -149,7 +151,10 @@ for fieldlength in "${FIELDLENGTHS[@]}"; do
         restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE" "$SKIP_BUILD"
         echo "Cluster restarted. Sleeping for $SLEEP_CLUSTER_START seconds..."
         sleep $SLEEP_CLUSTER_START
-
+        if $k == 1; then
+          # Create a new directory for the first iteration
+          echo $WORKLOAD_CMD > "$VERSION_OUTPUT_DIR/../workload_cmd.txt"
+        fi
         echo "Running workload: $WORKLOAD_NAME (Iteration $k)..."
         # Run the workload command
         $WORKLOAD_CMD
