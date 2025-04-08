@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -42,11 +43,13 @@ var (
 	mixedSequential  bool
 	mixedReadPercent int
 	preloadedKeys    []string
+	outputDir        string
 )
 
 func init() {
 	RootCmd.AddCommand(mixedCmd)
 
+	mixedCmd.Flags().StringVar(&outputDir, "output-dir", ".", "Directory to store benchmark reports")
 	mixedCmd.Flags().IntVar(&mixedTotal, "total", 10000, "Total number of operations (GET + PUT)")
 	mixedCmd.Flags().IntVar(&mixedRate, "rate", 0, "Max operations per second (0 is no limit)")
 	mixedCmd.Flags().IntVar(&mixedKeySize, "key-size", 8, "Key size")
@@ -63,6 +66,12 @@ func mixedFunc(cmd *cobra.Command, _ []string) {
 	}
 	if mixedRate == 0 {
 		mixedRate = math.MaxInt32
+	}
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create output directory %s: %v\n", outputDir, err)
+		os.Exit(1)
 	}
 
 	preloadEtcd(totalClients, totalConns) // Pass clients used for benchmarking
@@ -130,11 +139,21 @@ func mixedFunc(cmd *cobra.Command, _ []string) {
 	close(putReport.Results())
 	bar.Finish()
 
-	fmt.Println("\n📊 GET Operations Report:")
-	fmt.Println(<-getRc)
+	// ✅ Save GET report
+	getFile := filepath.Join(outputDir, "get.txt")
+	if err := writeReportToFile(<-getRc, getFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write GET report: %v\n", err)
+	} else {
+		fmt.Println("✅ GET report saved to ", getFile)
+	}
 
-	fmt.Println("\n📝 PUT Operations Report:")
-	fmt.Println(<-putRc)
+	// ✅ Save PUT report
+	putFile := filepath.Join(outputDir, "put.txt")
+	if err := writeReportToFile(<-putRc, putFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write PUT report: %v\n", err)
+	} else {
+		fmt.Println("✅ PUT report saved to ", putFile)
+	}
 }
 
 func preloadEtcd(totalClients uint, totalConns uint) {
@@ -147,10 +166,8 @@ func preloadEtcd(totalClients uint, totalConns uint) {
 	}()
 
 	requests := make(chan labeledOp, totalClients)
-
-	// ✅ Create and start the report consumer first
 	preloadReport := newReport()
-	rc := preloadReport.Run() // this launches goroutine that reads from Results()
+	rc := preloadReport.Run()
 
 	bar := pb.New(mixedKeySpace)
 	bar.Start()
@@ -161,7 +178,6 @@ func preloadEtcd(totalClients uint, totalConns uint) {
 			defer wg.Done()
 			for lo := range requests {
 				limit.Wait(context.Background())
-
 				st := time.Now()
 				_, err := c.Do(context.Background(), lo.op)
 				preloadReport.Results() <- report.Result{Err: err, Start: st, End: time.Now()}
@@ -170,7 +186,6 @@ func preloadEtcd(totalClients uint, totalConns uint) {
 		}(clients[i])
 	}
 
-	// ✅ DO NOT log every preload key
 	go func() {
 		for i := 0; i < mixedKeySpace; i++ {
 			keyBytes := make([]byte, mixedKeySize)
@@ -188,11 +203,25 @@ func preloadEtcd(totalClients uint, totalConns uint) {
 
 	wg.Wait()
 	bar.Finish()
-
-	// ✅ DO NOT close Results() manually
-	// ✅ Read the report AFTER workers are done
 	close(preloadReport.Results())
-	fmt.Println("\n🔄 Pre-load Operations Report:")
-	fmt.Println(<-rc)
-	fmt.Println("Pre-loading completed.")
+
+	// ✅ Save preload report to file
+	loadFile := filepath.Join(outputDir, "load.txt")
+	if err := writeReportToFile(<-rc, loadFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write preload report: %v\n", err)
+	} else {
+		fmt.Println("✅ Preload report saved to ", loadFile)
+	}
+}
+
+func writeReportToFile(summary string, filename string) error {
+	fmt.Println(filename, summary)
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(summary)
+	return err
 }
