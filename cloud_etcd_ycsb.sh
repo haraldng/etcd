@@ -151,7 +151,7 @@ for fieldlength in "${FIELDLENGTHS[@]}"; do
         restart_cluster "$CONFIG_FILE" "$IP_FILE" "$CLUSTER_LOG_FILE" "$SKIP_BUILD"
         echo "Cluster restarted. Sleeping for $SLEEP_CLUSTER_START seconds..."
         sleep $SLEEP_CLUSTER_START
-        if $k == 1; then
+        if [ "$k" -eq 1 ]; then
           # Create a new directory for the first iteration
           echo $WORKLOAD_CMD > "$VERSION_OUTPUT_DIR/../workload_cmd.txt"
         fi
