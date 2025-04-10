@@ -83,6 +83,11 @@ start_nodes() {
           --initial-cluster '$INITIAL_CLUSTER' \
           --initial-cluster-state new \
           --log-level error \
+          --grpc-keepalive-time=30s \
+          --grpc-keepalive-timeout=60s \
+          --grpc-keepalive-permit-without-stream=true \
+          --heartbeat-interval=500 \
+          --election-timeout=5000 \
           --data-dir=$ITERATION_DATA_DIR \
           $SNAPSHOT_FLAG \
           $QUOTA_BACKEND_FLAG > $NODE_LOG 2>&1 &" || { echo "ERROR: Failed to start etcd on VM $NODE_IP"; exit 1; }
