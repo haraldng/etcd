@@ -74,6 +74,8 @@ Make sure port 3000 is open
 Grafana etcd visualization at
 > http://public-ip:3000/
 
+You should be able to login as `admin` and with password also as `admin` to access grafana visuals
+
 Use the default Etcd by Prometheus visualization; You can extend dashboards to monitor additional metrics
 
 Soujanya Ponnapalli | 2025-04-01 | soujanya@berkeley.edu
