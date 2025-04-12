@@ -48,24 +48,6 @@ sudo chown "$USER":"$USER" "$MOUNT_POINT"
 sudo chmod 777 "$MOUNT_POINT"
 echo "Permissions set."
 
-# Step 6: Get the UUID of the device
-DISK_UUID=$(sudo blkid -s UUID -o value "$DEVICE_NAME")
-if [ -z "$DISK_UUID" ]; then
-    echo "Error: Unable to retrieve UUID for $DEVICE_NAME."
-    exit 1
-fi
-echo "Found UUID for $DEVICE_NAME: $DISK_UUID"
-
-# Step 7: Add the disk to /etc/fstab for persistence
-FSTAB_ENTRY="UUID=$DISK_UUID $MOUNT_POINT $FILESYSTEM_TYPE defaults 0 2"
-if grep -q "$DISK_UUID" /etc/fstab; then
-    echo "UUID already exists in /etc/fstab. Skipping update."
-else
-    echo "Adding entry to /etc/fstab:"
-    echo "$FSTAB_ENTRY"
-    echo "$FSTAB_ENTRY" | sudo tee -a /etc/fstab
-fi
-
 echo "All steps completed successfully!"
 df -h
 echo "If the size is incorrect, resize it with: sudo resize2fs $DEVICE_NAME"
